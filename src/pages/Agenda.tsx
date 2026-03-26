@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, Clock, GripVertical } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, Clock, GripVertical, Circle } from 'lucide-react';
 import { format, addDays, addMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isToday, isSameMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -10,6 +10,7 @@ import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { useRoutes } from '../hooks/useRoutes';
 import { useAgenda } from '../hooks/useAgenda';
+import { useDoctors } from '../hooks/useDoctors';
 import { PageLoading } from '../components/common/Loading';
 import type { DailySchedule, ScheduledVisit, VisitStatus } from '../types';
 
@@ -26,6 +27,7 @@ export function AgendaPage() {
 
   const { getDailySchedule, routes, updateScheduledVisit, moveVisitToDay } = useRoutes();
   const { monthSchedules, loadMonth, isLoading } = useAgenda();
+  const { markVisited } = useDoctors();
 
   useEffect(() => {
     if (view === 'month') loadMonth(currentDate);
@@ -76,9 +78,12 @@ export function AgendaPage() {
     loadDaySchedule(date);
   };
 
-  const handleUpdateVisit = useCallback(async (visitId: string, status: VisitStatus) => {
+  const handleUpdateVisit = useCallback(async (visitId: string, status: VisitStatus, doctorId?: string) => {
     await updateScheduledVisit(visitId, { status });
-  }, [updateScheduledVisit]);
+    if (status === 'completed' && doctorId) {
+      try { await markVisited(doctorId); } catch {}
+    }
+  }, [updateScheduledVisit, markVisited]);
 
   const handleMoveVisit = useCallback(async (visitId: string, targetDateStr: string) => {
     await moveVisitToDay(visitId, targetDateStr);
@@ -145,7 +150,7 @@ export function AgendaPage() {
           <WeekView currentDate={currentDate} weekSchedules={weekSchedules} onDayClick={handleDayClick} onMoveVisit={handleMoveVisit} />
         ))}
         {view === 'day' && (
-          <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} />
+          <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} onReloadDay={() => loadDaySchedule(currentDate)} />
         )}
       </div>
     </div>
@@ -408,28 +413,42 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit }: {
 }
 
 // ── Day View ──
-function DayView({ date, schedule, isLoading, onUpdateVisit }: {
+function DayView({ date, schedule, isLoading, onUpdateVisit, onReloadDay }: {
   date: Date;
   schedule: DailySchedule | null;
   isLoading: boolean;
-  onUpdateVisit: (visitId: string, status: VisitStatus) => Promise<void>;
+  onUpdateVisit: (visitId: string, status: VisitStatus, doctorId?: string) => Promise<void>;
+  onReloadDay: () => void;
 }) {
   const [visitStatuses, setVisitStatuses] = useState<Record<string, VisitStatus>>({});
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [markingAll, setMarkingAll] = useState(false);
 
   useEffect(() => { setVisitStatuses({}); }, [schedule?.id]);
 
   const getStatus = (visitId: string, baseStatus: VisitStatus): VisitStatus =>
     visitStatuses[visitId] ?? baseStatus;
 
-  const handleToggle = async (visitId: string, currentStatus: VisitStatus) => {
-    const nextStatus: VisitStatus =
-      currentStatus === 'pending'   ? 'completed' :
-      currentStatus === 'completed' ? 'not_done'  : 'pending';
+  const handleSet = async (visitId: string, nextStatus: VisitStatus, doctorId?: string) => {
     setVisitStatuses(prev => ({ ...prev, [visitId]: nextStatus }));
     setTogglingId(visitId);
-    try { await onUpdateVisit(visitId, nextStatus); }
+    try { await onUpdateVisit(visitId, nextStatus, doctorId); }
     finally { setTogglingId(null); }
+  };
+
+  const handleMarkAll = async () => {
+    if (!schedule) return;
+    const pending = schedule.visits.filter(v => getStatus(v.id, v.status) === 'pending');
+    if (pending.length === 0) return;
+    setMarkingAll(true);
+    try {
+      for (const v of pending) {
+        setVisitStatuses(prev => ({ ...prev, [v.id]: 'completed' }));
+        await onUpdateVisit(v.id, 'completed', v.doctorId);
+      }
+    } finally {
+      setMarkingAll(false);
+    }
   };
 
   const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -458,57 +477,115 @@ function DayView({ date, schedule, isLoading, onUpdateVisit }: {
   const renderVisit = (v: ScheduledVisit, shiftColor: 'amber' | 'blue' | 'orange') => {
     const status = getStatus(v.id, v.status);
     const isToggling = togglingId === v.id;
+    const isVisited = status === 'completed';
+    const isNotDone = status === 'not_done';
+
     return (
-      <button key={v.id} onClick={() => handleToggle(v.id, status)} disabled={isToggling}
-        className={`w-full text-left card py-3 flex items-center gap-3 transition-all active:scale-[0.98] ${
-          status === 'completed' ? 'bg-green-50 border-green-200' :
-          status === 'not_done'  ? 'bg-red-50 border-red-200' :
-          v.isSuggestion         ? 'bg-orange-50 border-orange-100' : ''
-        } ${isToggling ? 'opacity-60' : ''}`}>
-        <div className="shrink-0">
+      <div key={v.id} className={`card py-3 flex items-center gap-3 transition-all ${
+        isVisited  ? 'bg-green-50 border-green-200' :
+        isNotDone  ? 'bg-red-50 border-red-200' :
+        v.isSuggestion ? 'bg-orange-50 border-orange-100' : 'bg-white'
+      }`}>
+        {/* Checkbox: toggle visited */}
+        <button
+          onClick={() => handleSet(v.id, isVisited ? 'pending' : 'completed', v.doctorId)}
+          disabled={isToggling || markingAll}
+          className="shrink-0 p-0.5"
+          title={isVisited ? 'Desmarcar visita' : 'Marcar como visitado'}
+        >
           {isToggling ? (
             <div className="w-7 h-7 flex items-center justify-center">
-              <div className="w-4 h-4 rounded-full border-2 border-gray-300 border-t-blue-500 animate-spin" />
+              <div className="w-5 h-5 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin" />
             </div>
-          ) : status === 'completed' ? <CheckCircle2 className="w-7 h-7 text-green-500" />
-            : status === 'not_done'  ? <XCircle className="w-7 h-7 text-red-400" />
-            : <Clock className={`w-7 h-7 ${shiftColor === 'amber' ? 'text-amber-400' : shiftColor === 'orange' ? 'text-orange-300' : 'text-blue-400'}`} />}
-        </div>
+          ) : isVisited ? (
+            <CheckCircle2 className="w-7 h-7 text-green-500" />
+          ) : isNotDone ? (
+            <XCircle className="w-7 h-7 text-red-400" />
+          ) : (
+            <Circle className={`w-7 h-7 ${shiftColor === 'amber' ? 'text-amber-300' : shiftColor === 'orange' ? 'text-orange-300' : 'text-blue-300'}`} />
+          )}
+        </button>
+
+        {/* Doctor info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`text-xs font-bold shrink-0 ${shiftColor === 'amber' ? 'text-amber-600' : shiftColor === 'orange' ? 'text-orange-500' : 'text-blue-600'}`}>
-              {v.scheduledTime}
-            </span>
-            <p className={`font-medium truncate ${status === 'completed' ? 'text-green-700 line-through' : status === 'not_done' ? 'text-red-600 line-through' : v.isSuggestion ? 'text-orange-700' : 'text-gray-900'}`}>
-              {v.doctor?.name || '—'}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-xs font-bold shrink-0 ${
+              shiftColor === 'amber' ? 'text-amber-600' :
+              shiftColor === 'orange' ? 'text-orange-500' : 'text-blue-600'
+            }`}>{v.scheduledTime}</span>
+            <p className={`font-medium truncate ${
+              isVisited  ? 'text-green-700 line-through' :
+              isNotDone  ? 'text-red-600 line-through' :
+              v.isSuggestion ? 'text-orange-700' : 'text-gray-900'
+            }`}>
+              {v.doctor?.name || v.pharmacy?.name || '—'}
             </p>
-            {v.isSuggestion && <span className="text-[9px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-medium shrink-0">Sugestão</span>}
+            {v.isSuggestion && (
+              <span className="text-[9px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-medium shrink-0">Sugestão</span>
+            )}
           </div>
-          <p className="text-xs text-gray-400 truncate mt-0.5">{v.doctor?.address.neighborhood}, {v.doctor?.address.city}</p>
+          <p className="text-xs text-gray-400 truncate mt-0.5">
+            {v.doctor
+              ? `${v.doctor.address.neighborhood}, ${v.doctor.address.city}`
+              : v.pharmacy
+              ? `${v.pharmacy.address.neighborhood}, ${v.pharmacy.address.city}`
+              : ''}
+          </p>
         </div>
-        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${
-          status === 'completed' ? 'bg-green-100 text-green-700' :
-          status === 'not_done'  ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
-        }`}>
-          {status === 'completed' ? 'Realizada' : status === 'not_done' ? 'Não realizada' : 'Pendente'}
-        </span>
-      </button>
+
+        {/* "Não realizado" toggle */}
+        <button
+          onClick={() => handleSet(v.id, isNotDone ? 'pending' : 'not_done', v.doctorId)}
+          disabled={isToggling || markingAll}
+          title={isNotDone ? 'Desmarcar "não realizada"' : 'Marcar como não realizada'}
+          className={`shrink-0 p-1.5 rounded-lg transition-colors ${
+            isNotDone ? 'bg-red-100' : 'hover:bg-gray-100'
+          }`}
+        >
+          <XCircle className={`w-5 h-5 ${isNotDone ? 'text-red-500' : 'text-gray-300'}`} />
+        </button>
+      </div>
     );
   };
 
   return (
     <div className="space-y-4">
+      {/* Summary card */}
       <div className="card">
         <p className="font-semibold text-gray-900 capitalize mb-2">
           {dayNames[date.getDay()]}, {format(date, "d 'de' MMMM", { locale: ptBR })}
         </p>
-        <div className="flex gap-4 text-sm">
-          <div className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="font-semibold text-green-700">{completedCount}</span><span className="text-gray-500 text-xs">realizadas</span></div>
-          <div className="flex items-center gap-1.5"><XCircle className="w-4 h-4 text-red-400" /><span className="font-semibold text-red-600">{notDoneCount}</span><span className="text-gray-500 text-xs">não realizadas</span></div>
-          <div className="flex items-center gap-1.5"><Clock className="w-4 h-4 text-gray-400" /><span className="font-semibold text-gray-700">{pendingCount}</span><span className="text-gray-500 text-xs">pendentes</span></div>
+        <div className="flex gap-4 text-sm mb-3">
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-green-500" />
+            <span className="font-semibold text-green-700">{completedCount}</span>
+            <span className="text-gray-500 text-xs">visitadas</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <XCircle className="w-4 h-4 text-red-400" />
+            <span className="font-semibold text-red-600">{notDoneCount}</span>
+            <span className="text-gray-500 text-xs">não realizadas</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Circle className="w-4 h-4 text-gray-400" />
+            <span className="font-semibold text-gray-700">{pendingCount}</span>
+            <span className="text-gray-500 text-xs">pendentes</span>
+          </div>
         </div>
-        <p className="text-[11px] text-gray-400 mt-2">Toque no médico para alternar o status da visita</p>
+        {pendingCount > 0 && (
+          <button
+            onClick={handleMarkAll}
+            disabled={markingAll}
+            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-medium hover:bg-green-100 transition-colors disabled:opacity-60"
+          >
+            {markingAll
+              ? <><div className="w-4 h-4 rounded-full border-2 border-green-300 border-t-green-600 animate-spin" />Marcando...</>
+              : <><CheckCircle2 className="w-4 h-4" />Marcar todos como visitados ({pendingCount})</>
+            }
+          </button>
+        )}
       </div>
+
       {morning.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-2 px-1">
