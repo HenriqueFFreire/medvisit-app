@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, Clock, GripVertical, Circle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, Clock, GripVertical, Circle, ClipboardList } from 'lucide-react';
 import { format, addDays, addMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isToday, isSameMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -16,7 +17,10 @@ import type { DailySchedule, ScheduledVisit, VisitStatus } from '../types';
 
 type AgendaView = 'month' | 'week' | 'day';
 
+const toDateStr = (d: Date) => format(d, 'yyyy-MM-dd');
+
 export function AgendaPage() {
+  const navigate = useNavigate();
   const [view, setView] = useState<AgendaView>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -33,6 +37,11 @@ export function AgendaPage() {
     if (view === 'month') loadMonth(currentDate);
   }, [currentDate, view, loadMonth]);
 
+  const findRouteForDate = useCallback((date: Date) => {
+    const ds = toDateStr(date);
+    return routes.find(r => toDateStr(r.weekStartDate) <= ds && ds <= toDateStr(r.weekEndDate)) || null;
+  }, [routes]);
+
   const loadWeekSchedules = useCallback(async (date: Date) => {
     setIsLoadingWeek(true);
     setWeekSchedules([]);
@@ -41,7 +50,7 @@ export function AgendaPage() {
       const weekDays = Array.from({ length: 5 }, (_, i) => addDays(weekStart, i));
       const results: DailySchedule[] = [];
       for (const day of weekDays) {
-        const route = routes.find(r => day >= r.weekStartDate && day <= r.weekEndDate);
+        const route = findRouteForDate(day);
         if (route) {
           const sched = await getDailySchedule(route.id, day);
           if (sched) results.push(sched);
@@ -51,7 +60,7 @@ export function AgendaPage() {
     } finally {
       setIsLoadingWeek(false);
     }
-  }, [routes, getDailySchedule]);
+  }, [findRouteForDate, getDailySchedule]);
 
   useEffect(() => {
     if (view === 'week') loadWeekSchedules(currentDate);
@@ -61,7 +70,7 @@ export function AgendaPage() {
     setIsLoadingDay(true);
     setDaySchedule(null);
     try {
-      const route = routes.find(r => date >= r.weekStartDate && date <= r.weekEndDate);
+      const route = findRouteForDate(date);
       if (route) {
         const sched = await getDailySchedule(route.id, date);
         setDaySchedule(sched);
@@ -69,7 +78,7 @@ export function AgendaPage() {
     } finally {
       setIsLoadingDay(false);
     }
-  }, [routes, getDailySchedule]);
+  }, [findRouteForDate, getDailySchedule]);
 
   const handleDayClick = (date: Date) => {
     setSelectedDate(date);
@@ -147,10 +156,10 @@ export function AgendaPage() {
           <MonthView currentDate={currentDate} scheduleByDate={scheduleByDate} onDayClick={handleDayClick} selectedDate={selectedDate} />
         ))}
         {view === 'week' && (isLoadingWeek ? <PageLoading /> : (
-          <WeekView currentDate={currentDate} weekSchedules={weekSchedules} onDayClick={handleDayClick} onMoveVisit={handleMoveVisit} />
+          <WeekView currentDate={currentDate} weekSchedules={weekSchedules} onDayClick={handleDayClick} onMoveVisit={handleMoveVisit} hasRouteForWeek={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
         ))}
         {view === 'day' && (
-          <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} onReloadDay={() => loadDaySchedule(currentDate)} />
+          <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} onReloadDay={() => loadDaySchedule(currentDate)} hasRoute={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
         )}
       </div>
     </div>
@@ -256,11 +265,13 @@ function DroppableDayCol({ dateStr, children, today }: { dateStr: string; childr
 }
 
 // ── Week View ──
-function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit }: {
+function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRouteForWeek, onGoToRoutes }: {
   currentDate: Date;
   weekSchedules: DailySchedule[];
   onDayClick: (date: Date) => void;
   onMoveVisit: (visitId: string, targetDateStr: string) => Promise<void>;
+  hasRouteForWeek: boolean;
+  onGoToRoutes: () => void;
 }) {
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 5 }, (_, i) => addDays(weekStart, i));
@@ -310,6 +321,17 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit }: {
   };
 
   const totalWeekVisits = weekSchedules.reduce((sum, s) => sum + s.visits.length, 0);
+
+  if (!hasRouteForWeek) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <ClipboardList className="w-10 h-10 mx-auto mb-3 opacity-40" />
+        <p className="text-sm font-medium text-gray-600">Nenhum roteiro para esta semana</p>
+        <p className="text-xs mt-1 mb-4">Crie um roteiro para ver as visitas aqui</p>
+        <button onClick={onGoToRoutes} className="btn-primary text-sm">Ir para Roteiros</button>
+      </div>
+    );
+  }
 
   if (totalWeekVisits === 0) {
     return (
@@ -413,12 +435,14 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit }: {
 }
 
 // ── Day View ──
-function DayView({ date, schedule, isLoading, onUpdateVisit, onReloadDay }: {
+function DayView({ date, schedule, isLoading, onUpdateVisit, onReloadDay, hasRoute, onGoToRoutes }: {
   date: Date;
   schedule: DailySchedule | null;
   isLoading: boolean;
   onUpdateVisit: (visitId: string, status: VisitStatus, doctorId?: string) => Promise<void>;
   onReloadDay: () => void;
+  hasRoute: boolean;
+  onGoToRoutes: () => void;
 }) {
   const [visitStatuses, setVisitStatuses] = useState<Record<string, VisitStatus>>({});
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -456,6 +480,15 @@ function DayView({ date, schedule, isLoading, onUpdateVisit, onReloadDay }: {
   if (isLoading) return (
     <div className="flex items-center justify-center py-12">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>
+  );
+
+  if (!hasRoute) return (
+    <div className="text-center py-12">
+      <ClipboardList className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+      <p className="font-medium text-gray-600">Nenhum roteiro para este período</p>
+      <p className="text-sm text-gray-400 mt-1 mb-4">Crie um roteiro para ver e marcar visitas</p>
+      <button onClick={onGoToRoutes} className="btn-primary text-sm">Ir para Roteiros</button>
     </div>
   );
 
