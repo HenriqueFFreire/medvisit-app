@@ -155,6 +155,9 @@ export function DoctorsPage() {
       await deleteDoctor(selectedDoctor.id);
       setShowDeleteConfirm(false);
       navigate('/doctors');
+    } catch (err) {
+      console.error('Erro ao excluir médico:', err);
+      alert('Erro ao excluir médico. Tente novamente.');
     } finally {
       setIsDeleting(false);
     }

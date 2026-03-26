@@ -57,10 +57,13 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [crmWarning, setCrmWarning] = useState<string | null>(null);
   const [isLoadingCEP, setIsLoadingCEP] = useState(false);
   const [showCepSuggestions, setShowCepSuggestions] = useState(false);
+  const [showComplementSuggestions, setShowComplementSuggestions] = useState(false);
   const cepSuggestionRef = useRef<HTMLDivElement>(null);
   const suggestionSelectedRef = useRef(false);
+  const complementSuggestionSelectedRef = useRef(false);
 
   // Unique addresses already registered (excluding the doctor being edited)
   const knownAddresses = useMemo(() => {
@@ -85,10 +88,31 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       .slice(0, 8);
   }, [formData.address.zipCode, knownAddresses]);
 
+  const complementSuggestions = useMemo(() => {
+    const allComplements = [...new Set(
+      doctors
+        .filter(d => d.id !== doctor?.id && d.address?.complement)
+        .map(d => d.address.complement as string)
+    )].sort();
+    const typed = formData.address.complement?.toLowerCase() || '';
+    if (!typed) return allComplements.slice(0, 8);
+    return allComplements
+      .filter(c => c.toLowerCase().includes(typed))
+      .slice(0, 8);
+  }, [formData.address.complement, doctors, doctor?.id]);
+
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
     if ((field === 'name' || field === 'crm') && duplicateError) setDuplicateError(null);
+    if (field === 'crm') {
+      const normalize = (s: string) => s.replace(/[\s\-_.]/g, '').toUpperCase();
+      const normValue = normalize(value);
+      const existing = normValue
+        ? doctors.find(d => d.id !== doctor?.id && normalize(d.crm) === normValue)
+        : null;
+      setCrmWarning(existing ? `CRM já cadastrado: ${existing.name}` : null);
+    }
   };
 
   const handleAddressChange = (field: keyof Address, value: string) => {
@@ -273,6 +297,14 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
               placeholder="SP0001234"
             />
             {errors.crm && <p className="text-sm text-red-500 mt-1">{errors.crm}</p>}
+            {!errors.crm && crmWarning && (
+              <div className="mt-1 flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-lg px-2.5 py-1.5">
+                <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                <p className="text-xs font-medium text-amber-700">{crmWarning}</p>
+              </div>
+            )}
           </div>
 
           <div>
@@ -449,13 +481,41 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
         <div>
           <label className="label">Complemento</label>
-          <input
-            type="text"
-            className="input"
-            value={formData.address.complement}
-            onChange={e => handleAddressChange('complement', e.target.value)}
-            placeholder="Sala 101"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              className="input"
+              value={formData.address.complement}
+              onChange={e => { handleAddressChange('complement', e.target.value); setShowComplementSuggestions(true); }}
+              onFocus={() => setShowComplementSuggestions(true)}
+              onBlur={() => {
+                setTimeout(() => setShowComplementSuggestions(false), 150);
+                complementSuggestionSelectedRef.current = false;
+              }}
+              onKeyDown={e => { if (e.key === 'Escape') setShowComplementSuggestions(false); }}
+              placeholder="Sala 101"
+              autoComplete="off"
+            />
+            {showComplementSuggestions && complementSuggestions.length > 0 && (
+              <div className="absolute z-50 top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                <p className="text-xs text-gray-400 px-3 pt-2 pb-1">Complementos já cadastrados</p>
+                {complementSuggestions.map((complement, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onMouseDown={() => {
+                      complementSuggestionSelectedRef.current = true;
+                      handleAddressChange('complement', complement);
+                      setShowComplementSuggestions(false);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors border-t border-gray-100 first:border-t-0 text-sm text-gray-700"
+                  >
+                    {complement}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
