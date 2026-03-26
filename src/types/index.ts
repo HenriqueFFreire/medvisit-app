@@ -52,6 +52,19 @@ export interface Doctor {
   lastRoutedDate?: Date;
 }
 
+export interface Pharmacy {
+  id: string;
+  name: string;
+  phone?: string;
+  address: Address;
+  coordinates?: Coordinates;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  syncStatus: 'synced';
+  lastRoutedDate?: Date;
+}
+
 export interface Address {
   street: string;
   number: string;
@@ -108,6 +121,8 @@ export interface ScheduledVisit {
   dailyScheduleId: string;
   doctorId: string;
   doctor?: Doctor;
+  pharmacyId?: string;
+  pharmacy?: Pharmacy;
   order: number;
   scheduledTime: string; // HH:mm format
   estimatedEndTime: string;

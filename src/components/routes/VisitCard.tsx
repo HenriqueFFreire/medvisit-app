@@ -27,6 +27,8 @@ export function VisitCard({
   onNavigate
 }: VisitCardProps) {
   const doctor = visit.doctor;
+  const pharmacy = visit.pharmacy;
+  const isPharmacyVisit = !!visit.pharmacyId;
 
   const statusColors = {
     pending: 'bg-gray-100 text-gray-600',
@@ -45,11 +47,12 @@ export function VisitCard({
   };
 
   const handleNavigate = (app: 'google' | 'waze') => {
-    if (!doctor?.coordinates) return;
+    const coordinates = isPharmacyVisit ? pharmacy?.coordinates : doctor?.coordinates;
+    if (!coordinates) return;
 
     const url = app === 'google'
-      ? getGoogleMapsUrl(doctor.coordinates)
-      : getWazeUrl(doctor.coordinates);
+      ? getGoogleMapsUrl(coordinates)
+      : getWazeUrl(coordinates);
 
     window.open(url, '_blank');
     onNavigate?.(app);
@@ -86,11 +89,21 @@ export function VisitCard({
       <div className="p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-gray-900">{doctor?.name || 'Médico não encontrado'}</h3>
-            <p className="text-sm text-gray-500">
-              CRM {doctor?.crm}
-              {doctor?.specialty && ` • ${doctor.specialty}`}
-            </p>
+            {isPharmacyVisit ? (
+              <>
+                <h3 className="font-semibold text-gray-900">
+                  💊 {pharmacy?.name || 'Farmácia não encontrada'}
+                </h3>
+              </>
+            ) : (
+              <>
+                <h3 className="font-semibold text-gray-900">{doctor?.name || 'Médico não encontrado'}</h3>
+                <p className="text-sm text-gray-500">
+                  CRM {doctor?.crm}
+                  {doctor?.specialty && ` • ${doctor.specialty}`}
+                </p>
+              </>
+            )}
           </div>
           {/* Visited flag */}
           {onMarkVisited && (
@@ -109,11 +122,20 @@ export function VisitCard({
           )}
         </div>
 
-        {doctor?.address && (
-          <div className="flex items-start mt-2 text-sm text-gray-600">
-            <MapPin className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0 text-gray-400" />
-            <span>{formatShortAddress(doctor.address)}</span>
-          </div>
+        {isPharmacyVisit ? (
+          pharmacy?.address && (
+            <div className="flex items-start mt-2 text-sm text-gray-600">
+              <MapPin className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0 text-gray-400" />
+              <span>{formatShortAddress(pharmacy.address)}</span>
+            </div>
+          )
+        ) : (
+          doctor?.address && (
+            <div className="flex items-start mt-2 text-sm text-gray-600">
+              <MapPin className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0 text-gray-400" />
+              <span>{formatShortAddress(doctor.address)}</span>
+            </div>
+          )
         )}
 
         {(visit.estimatedTravelTime || visit.estimatedDistance) && (
@@ -129,7 +151,7 @@ export function VisitCard({
 
         {/* Actions */}
         <div className="flex gap-2 mt-4">
-          {visit.status === 'pending' && doctor?.coordinates && (
+          {visit.status === 'pending' && (isPharmacyVisit ? pharmacy?.coordinates : doctor?.coordinates) && (
             <>
               <button
                 onClick={() => handleNavigate('google')}

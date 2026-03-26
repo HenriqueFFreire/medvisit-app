@@ -9,6 +9,7 @@ import { RoutesPage } from './pages/Routes';
 import { HistoryPage } from './pages/History';
 import { SettingsPage } from './pages/Settings';
 import { AgendaPage } from './pages/Agenda';
+import { PharmaciesPage } from './pages/Pharmacies';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -105,6 +106,26 @@ function AppRoutes() {
           <ProtectedRoute>
             <Layout>
               <SettingsPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pharmacies"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <PharmaciesPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pharmacies/:id"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <PharmaciesPage />
             </Layout>
           </ProtectedRoute>
         }
