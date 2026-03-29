@@ -9,6 +9,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useDoctors } from '../hooks/useDoctors';
 import { useAuth } from '../contexts/AuthContext';
+import { useApp } from '../contexts/AppContext';
 import { isVisitedThisMonth } from '../components/doctors/DoctorCard';
 import { exportDoctorsToExcel } from '../services/excel';
 
@@ -16,9 +17,11 @@ export function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { doctors } = useDoctors();
+  const { settings } = useApp();
+  const cycleDay = settings?.cycleStartDay ?? 1;
 
   const today = new Date();
-  const visitedCount   = doctors.filter(d => isVisitedThisMonth(d)).length;
+  const visitedCount   = doctors.filter(d => isVisitedThisMonth(d, cycleDay)).length;
   const unvisitedCount = doctors.length - visitedCount;
 
   const unroutedCount = useMemo(() => {

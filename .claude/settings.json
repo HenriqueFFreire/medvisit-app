@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Read(//c/Users/**)",
+      "Bash(npm run:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(npx firebase:*)",
+      "Bash(where firebase:*)",
+      "Bash(npm install:*)"
+    ]
+  }
+}

@@ -173,6 +173,7 @@ export interface Settings {
   defaultVisitDuration: number; // Default: 30 minutes
   defaultVisitsPerDay: number; // Default: 8
   minimumInterval: number; // Default: 15 minutes
+  cycleStartDay?: number; // Day of month when visit cycle starts (1–28). Default: 1
 }
 
 // Medical specialties

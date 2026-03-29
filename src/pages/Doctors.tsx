@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Search, Plus, Upload, Download, Map, List, Filter, ArrowLeft, Trash2, Edit, MapPin, Phone, Mail, Clock, FileText, Users, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import { useDoctors } from '../hooks/useDoctors';
 import { useVisits } from '../hooks/useVisits';
+import { useApp } from '../contexts/AppContext';
 import { DoctorCard, isVisitedThisMonth } from '../components/doctors/DoctorCard';
 import { DoctorForm, type DoctorFormData } from '../components/doctors/DoctorForm';
 import { DoctorMap } from '../components/maps/DoctorMap';
@@ -29,6 +30,8 @@ export function DoctorsPage() {
   } = useDoctors();
 
   const { getVisitsForDoctor } = useVisits();
+  const { settings } = useApp();
+  const cycleDay = settings?.cycleStartDay ?? 1;
 
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [searchQuery, setSearchQuery] = useState('');
@@ -117,7 +120,7 @@ export function DoctorsPage() {
     }
 
     if (onlyUnvisited) {
-      result = result.filter(d => !isVisitedThisMonth(d));
+      result = result.filter(d => !isVisitedThisMonth(d, cycleDay));
     }
 
     setFilteredDoctors(result);
@@ -217,7 +220,7 @@ export function DoctorsPage() {
             Voltar
           </button>
           <div className="flex gap-2">
-            {!isVisitedThisMonth(selectedDoctor) && (
+            {!isVisitedThisMonth(selectedDoctor, cycleDay) && (
               <button
                 onClick={() => markVisited(selectedDoctor.id).then(() =>
                   getDoctor(selectedDoctor.id).then(d => d && setSelectedDoctor(d))

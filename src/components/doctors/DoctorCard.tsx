@@ -1,12 +1,33 @@
 import { MapPin, Phone, Clock, ChevronRight, CheckCircle2 } from 'lucide-react';
 import type { Doctor } from '../../types';
 import { formatShortAddress, formatTimeAgo } from '../../utils/format';
+import { useApp } from '../../contexts/AppContext';
 
-export function isVisitedThisMonth(doctor: Doctor): boolean {
+export function getCycleRange(today: Date, cycleStartDay = 1): { start: Date; end: Date } {
+  const day = Math.min(Math.max(cycleStartDay, 1), 28);
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const todayDate = today.getDate();
+
+  let startYear = year;
+  let startMonth = month;
+  if (todayDate < day) {
+    startMonth = month - 1;
+    if (startMonth < 0) { startMonth = 11; startYear = year - 1; }
+  }
+
+  const cycleStart = new Date(startYear, startMonth, day, 0, 0, 0, 0);
+  // day-1 = 0 when day=1 → new Date(y, m+1, 0) = last day of month (JS behavior)
+  const cycleEnd = new Date(startYear, startMonth + 1, day - 1, 23, 59, 59, 999);
+  return { start: cycleStart, end: cycleEnd };
+}
+
+export function isVisitedThisMonth(doctor: Doctor, cycleStartDay = 1): boolean {
   if (!doctor.lastVisitDate) return false;
   const now = new Date();
   const d = new Date(doctor.lastVisitDate);
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  const { start, end } = getCycleRange(now, cycleStartDay);
+  return d >= start && d <= end;
 }
 
 interface DoctorCardProps {
@@ -17,7 +38,8 @@ interface DoctorCardProps {
 }
 
 export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisited }: DoctorCardProps) {
-  const visitedThisMonth = isVisitedThisMonth(doctor);
+  const { settings } = useApp();
+  const visitedThisMonth = isVisitedThisMonth(doctor, settings?.cycleStartDay ?? 1);
 
   const noPainel = doctor.hasPanel === false;
 

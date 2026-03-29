@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { User, Clock, MapPin, Database, LogOut, Info, Shield, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { User, Clock, MapPin, Database, LogOut, Info, Shield, KeyRound, Eye, EyeOff, RefreshCw, ChevronRight } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { useDoctors } from '../hooks/useDoctors';
@@ -34,6 +34,8 @@ export function SettingsPage() {
   const [defaultVisitDuration, setDefaultVisitDuration] = useState(settings?.defaultVisitDuration || 10);
   const [defaultVisitsPerDay, setDefaultVisitsPerDay] = useState(settings?.defaultVisitsPerDay || 8);
   const [minimumInterval, setMinimumInterval] = useState(settings?.minimumInterval || 15);
+  const [showCycleModal, setShowCycleModal] = useState(false);
+  const [cycleStartDay, setCycleStartDay] = useState(settings?.cycleStartDay ?? 1);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSaveProfile = async () => {
@@ -90,6 +92,16 @@ export function SettingsPage() {
       } else {
         setPasswordError('Erro ao alterar senha. Tente novamente.');
       }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveCycle = async () => {
+    setIsSaving(true);
+    try {
+      await updateSettings({ cycleStartDay });
+      setShowCycleModal(false);
     } finally {
       setIsSaving(false);
     }
@@ -202,6 +214,29 @@ export function SettingsPage() {
               <p className="font-medium text-gray-900">Sobre o App</p>
               <p className="text-sm text-gray-500">MedVisit v1.0.0</p>
             </div>
+          </button>
+        </div>
+
+        {/* Cycle Settings */}
+        <div className="card">
+          <button
+            className="w-full flex items-center justify-between"
+            onClick={() => { setCycleStartDay(settings?.cycleStartDay ?? 1); setShowCycleModal(true); }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                <RefreshCw className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div className="text-left">
+                <p className="font-medium text-gray-900">Ciclo de Visitas</p>
+                <p className="text-sm text-gray-500">
+                  {(settings?.cycleStartDay ?? 1) === 1
+                    ? 'Dia 1 ao último dia do mês'
+                    : `Dia ${settings?.cycleStartDay} ao dia ${(settings?.cycleStartDay ?? 1) - 1} do mês seguinte`}
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-gray-400" />
           </button>
         </div>
 
@@ -341,6 +376,37 @@ export function SettingsPage() {
               disabled={isSaving}
               className="btn-primary flex-1"
             >
+              {isSaving ? <ButtonLoading /> : 'Salvar'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Cycle Modal */}
+      <Modal isOpen={showCycleModal} onClose={() => setShowCycleModal(false)} title="Ciclo de Visitas">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Define o período de contagem de visitas. O ciclo começa no dia selecionado de cada mês e termina no dia anterior do mês seguinte.
+          </p>
+          <div>
+            <label className="label">Dia de início do ciclo (1–28)</label>
+            <input
+              type="number"
+              className="input"
+              min={1}
+              max={28}
+              value={cycleStartDay}
+              onChange={e => setCycleStartDay(Math.min(28, Math.max(1, parseInt(e.target.value) || 1)))}
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              {cycleStartDay === 1
+                ? 'Ciclo: dia 1 ao último dia do mês'
+                : `Ciclo: dia ${cycleStartDay} ao dia ${cycleStartDay - 1} do mês seguinte`}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setShowCycleModal(false)} className="btn-secondary flex-1">Cancelar</button>
+            <button onClick={handleSaveCycle} disabled={isSaving} className="btn-primary flex-1">
               {isSaving ? <ButtonLoading /> : 'Salvar'}
             </button>
           </div>

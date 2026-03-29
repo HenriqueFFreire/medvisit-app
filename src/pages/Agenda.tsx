@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, GripVertical, Circle, ClipboardList } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, GripVertical, Circle, ClipboardList, RefreshCw, Filter } from 'lucide-react';
 import { format, addDays, addMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isToday, isSameMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -12,6 +12,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { useRoutes } from '../hooks/useRoutes';
 import { useAgenda } from '../hooks/useAgenda';
 import { useDoctors } from '../hooks/useDoctors';
+import { useApp } from '../contexts/AppContext';
+import { getCycleRange } from '../components/doctors/DoctorCard';
 import { PageLoading } from '../components/common/Loading';
 import type { DailySchedule, ScheduledVisit, VisitStatus } from '../types';
 
@@ -32,6 +34,8 @@ export function AgendaPage() {
   const { getDailySchedule, routes, updateScheduledVisit, moveVisitToDay } = useRoutes();
   const { monthSchedules, loadMonth, isLoading } = useAgenda();
   const { markVisited } = useDoctors();
+  const { settings } = useApp();
+  const cycleRange = useMemo(() => getCycleRange(new Date(), settings?.cycleStartDay ?? 1), [settings?.cycleStartDay]);
 
   useEffect(() => {
     if (view === 'month') loadMonth(currentDate);
@@ -149,6 +153,14 @@ export function AgendaPage() {
             <ChevronRight className="w-5 h-5 text-gray-600" />
           </button>
         </div>
+
+        {/* Cycle period indicator */}
+        <div className="flex items-center gap-1.5 mt-2 px-1">
+          <RefreshCw className="w-3 h-3 text-indigo-500" />
+          <span className="text-xs text-indigo-600 font-medium">
+            Ciclo: {format(cycleRange.start, "d MMM", { locale: ptBR })} – {format(cycleRange.end, "d MMM yyyy", { locale: ptBR })}
+          </span>
+        </div>
       </div>
 
       <div className="p-4">
@@ -156,7 +168,7 @@ export function AgendaPage() {
           <MonthView currentDate={currentDate} scheduleByDate={scheduleByDate} onDayClick={handleDayClick} selectedDate={selectedDate} />
         ))}
         {view === 'week' && (isLoadingWeek ? <PageLoading /> : (
-          <WeekView currentDate={currentDate} weekSchedules={weekSchedules} onDayClick={handleDayClick} onMoveVisit={handleMoveVisit} hasRouteForWeek={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
+          <WeekView currentDate={currentDate} weekSchedules={weekSchedules} onDayClick={handleDayClick} onMoveVisit={handleMoveVisit} onUpdateVisit={handleUpdateVisit} hasRouteForWeek={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
         ))}
         {view === 'day' && (
           <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} hasRoute={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
@@ -218,35 +230,57 @@ function MonthView({ currentDate, scheduleByDate, onDayClick, selectedDate }: {
 }
 
 // ── Draggable visit chip ──
-function DraggableVisitChip({ visit }: { visit: ScheduledVisit }) {
+function DraggableVisitChip({ visit, effectiveStatus, onToggle }: {
+  visit: ScheduledVisit;
+  effectiveStatus?: VisitStatus;
+  onToggle?: () => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `visit-${visit.id}` });
   const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.4 : 1 };
   const isPanel = !visit.isSuggestion;
+  const status = effectiveStatus ?? visit.status;
 
   return (
     <div ref={setNodeRef} style={style} {...attributes}
-      className={`flex items-center gap-1 rounded px-1.5 py-0.5 mb-0.5 cursor-grab active:cursor-grabbing select-none ${
-        visit.status === 'completed' ? 'bg-green-100 border border-green-200' :
-        visit.status === 'not_done'  ? 'bg-red-50 border border-red-200' :
+      className={`flex items-center gap-1 rounded px-1.5 py-0.5 mb-0.5 select-none ${
+        status === 'completed' ? 'bg-green-100 border border-green-200' :
+        status === 'not_done'  ? 'bg-red-50 border border-red-200' :
         isPanel ? 'bg-white border border-gray-200' : 'bg-orange-50 border border-orange-200'
       }`}>
-      <span {...listeners} className="shrink-0 text-gray-300 hover:text-gray-500 touch-none">
+      <span {...listeners} className="shrink-0 text-gray-300 hover:text-gray-500 touch-none cursor-grab active:cursor-grabbing">
         <GripVertical className="w-3 h-3" />
       </span>
       <div className="flex-1 min-w-0">
         <p className={`text-[10px] font-medium truncate leading-tight ${
-          visit.status === 'completed' ? 'text-green-700 line-through' :
-          visit.status === 'not_done'  ? 'text-red-500 line-through' :
+          status === 'completed' ? 'text-green-700 line-through' :
+          status === 'not_done'  ? 'text-red-500 line-through' :
           isPanel ? 'text-gray-800' : 'text-orange-700'
         }`}>
-          {visit.doctor?.name ?? '—'}
+          {visit.doctor?.name ?? visit.pharmacy?.name ?? '—'}
         </p>
         <p className={`text-[9px] truncate leading-tight ${isPanel ? 'text-gray-400' : 'text-orange-400'}`}>
           {visit.scheduledTime}
         </p>
       </div>
-      {visit.status === 'completed' && <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />}
-      {visit.status === 'not_done'  && <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
+      {onToggle ? (
+        <button
+          onClick={e => { e.stopPropagation(); onToggle(); }}
+          className="shrink-0 p-0.5"
+          title={status === 'completed' ? 'Desmarcar visitado' : 'Marcar como visitado'}
+        >
+          {status === 'completed'
+            ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+            : status === 'not_done'
+            ? <XCircle className="w-3.5 h-3.5 text-red-400" />
+            : <Circle className="w-3.5 h-3.5 text-gray-300 hover:text-green-400" />
+          }
+        </button>
+      ) : (
+        <>
+          {status === 'completed' && <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />}
+          {status === 'not_done'  && <XCircle className="w-3 h-3 text-red-400 shrink-0" />}
+        </>
+      )}
     </div>
   );
 }
@@ -265,11 +299,12 @@ function DroppableDayCol({ dateStr, children, today }: { dateStr: string; childr
 }
 
 // ── Week View ──
-function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRouteForWeek, onGoToRoutes }: {
+function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdateVisit, hasRouteForWeek, onGoToRoutes }: {
   currentDate: Date;
   weekSchedules: DailySchedule[];
   onDayClick: (date: Date) => void;
   onMoveVisit: (visitId: string, targetDateStr: string) => Promise<void>;
+  onUpdateVisit?: (visitId: string, status: VisitStatus, doctorId?: string) => Promise<void>;
   hasRouteForWeek: boolean;
   onGoToRoutes: () => void;
 }) {
@@ -277,6 +312,7 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRout
   const weekDays = Array.from({ length: 5 }, (_, i) => addDays(weekStart, i));
   const [activeVisit, setActiveVisit] = useState<ScheduledVisit | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [visitStatuses, setVisitStatuses] = useState<Record<string, VisitStatus>>({});
 
   const schedByDate = useMemo(() => {
     const map = new Map<string, DailySchedule>();
@@ -295,6 +331,16 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRout
       for (const v of sched.visits) map.set(v.id, v);
     return map;
   }, [weekSchedules]);
+
+  const handleWeekToggle = async (visitId: string, currentStatus: VisitStatus, doctorId?: string) => {
+    const nextStatus: VisitStatus = currentStatus === 'completed' ? 'pending' : 'completed';
+    setVisitStatuses(prev => ({ ...prev, [visitId]: nextStatus }));
+    try {
+      await onUpdateVisit?.(visitId, nextStatus, doctorId);
+    } catch {
+      setVisitStatuses(prev => ({ ...prev, [visitId]: currentStatus }));
+    }
+  };
 
   const handleDragStart = (e: DragStartEvent) => {
     const visitId = (e.active.id as string).replace('visit-', '');
@@ -380,7 +426,7 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRout
                       {morning.map(v => (
                         movingId === v.id
                           ? <div key={v.id} className="text-[10px] text-gray-300 pl-2 py-0.5 animate-pulse">movendo...</div>
-                          : <DraggableVisitChip key={v.id} visit={v} />
+                          : <DraggableVisitChip key={v.id} visit={v} effectiveStatus={visitStatuses[v.id] ?? v.status} onToggle={onUpdateVisit ? () => handleWeekToggle(v.id, visitStatuses[v.id] ?? v.status, v.doctorId) : undefined} />
                       ))}
                     </div>
                   )}
@@ -393,7 +439,7 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRout
                       {afternoon.map(v => (
                         movingId === v.id
                           ? <div key={v.id} className="text-[10px] text-gray-300 pl-2 py-0.5 animate-pulse">movendo...</div>
-                          : <DraggableVisitChip key={v.id} visit={v} />
+                          : <DraggableVisitChip key={v.id} visit={v} effectiveStatus={visitStatuses[v.id] ?? v.status} onToggle={onUpdateVisit ? () => handleWeekToggle(v.id, visitStatuses[v.id] ?? v.status, v.doctorId) : undefined} />
                       ))}
                     </div>
                   )}
@@ -406,7 +452,7 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRout
                       {suggVisits.map(v => (
                         movingId === v.id
                           ? <div key={v.id} className="text-[10px] text-orange-300 pl-2 py-0.5 animate-pulse">movendo...</div>
-                          : <DraggableVisitChip key={v.id} visit={v} />
+                          : <DraggableVisitChip key={v.id} visit={v} effectiveStatus={visitStatuses[v.id] ?? v.status} onToggle={onUpdateVisit ? () => handleWeekToggle(v.id, visitStatuses[v.id] ?? v.status, v.doctorId) : undefined} />
                       ))}
                     </div>
                   )}
@@ -446,6 +492,7 @@ function DayView({ date, schedule, isLoading, onUpdateVisit, hasRoute, onGoToRou
   const [visitStatuses, setVisitStatuses] = useState<Record<string, VisitStatus>>({});
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [markingAll, setMarkingAll] = useState(false);
+  const [showOnlyPending, setShowOnlyPending] = useState(false);
 
   useEffect(() => { setVisitStatuses({}); }, [schedule?.id]);
 
@@ -500,11 +547,15 @@ function DayView({ date, schedule, isLoading, onUpdateVisit, hasRoute, onGoToRou
   );
 
   const allVisits = schedule.visits;
-  const morning   = allVisits.filter(v => parseInt(v.scheduledTime.split(':')[0]) < 12);
-  const afternoon = allVisits.filter(v => parseInt(v.scheduledTime.split(':')[0]) >= 12);
+  const visibleVisits = showOnlyPending
+    ? allVisits.filter(v => { const s = getStatus(v.id, v.status); return s === 'pending' || s === 'not_done'; })
+    : allVisits;
+  const morning   = visibleVisits.filter(v => parseInt(v.scheduledTime.split(':')[0]) < 12);
+  const afternoon = visibleVisits.filter(v => parseInt(v.scheduledTime.split(':')[0]) >= 12);
   const completedCount = allVisits.filter(v => getStatus(v.id, v.status) === 'completed').length;
   const notDoneCount   = allVisits.filter(v => getStatus(v.id, v.status) === 'not_done').length;
   const pendingCount   = allVisits.filter(v => getStatus(v.id, v.status) === 'pending').length;
+  const pendingOrNotDoneCount = pendingCount + notDoneCount;
 
   const renderVisit = (v: ScheduledVisit, shiftColor: 'amber' | 'blue' | 'orange') => {
     const status = getStatus(v.id, v.status);
@@ -604,18 +655,32 @@ function DayView({ date, schedule, isLoading, onUpdateVisit, hasRoute, onGoToRou
             <span className="text-gray-500 text-xs">pendentes</span>
           </div>
         </div>
-        {pendingCount > 0 && (
+        <div className="flex gap-2 items-center">
+          {pendingCount > 0 && (
+            <button
+              onClick={handleMarkAll}
+              disabled={markingAll}
+              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-medium hover:bg-green-100 transition-colors disabled:opacity-60"
+            >
+              {markingAll
+                ? <><div className="w-4 h-4 rounded-full border-2 border-green-300 border-t-green-600 animate-spin" />Marcando...</>
+                : <><CheckCircle2 className="w-4 h-4" />Marcar todos ({pendingCount})</>
+              }
+            </button>
+          )}
           <button
-            onClick={handleMarkAll}
-            disabled={markingAll}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm font-medium hover:bg-green-100 transition-colors disabled:opacity-60"
+            onClick={() => setShowOnlyPending(p => !p)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+              showOnlyPending
+                ? 'bg-amber-50 border-amber-300 text-amber-700'
+                : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+            }`}
+            title="Filtrar pendentes"
           >
-            {markingAll
-              ? <><div className="w-4 h-4 rounded-full border-2 border-green-300 border-t-green-600 animate-spin" />Marcando...</>
-              : <><CheckCircle2 className="w-4 h-4" />Marcar todos como visitados ({pendingCount})</>
-            }
+            <Filter className="w-3.5 h-3.5" />
+            {showOnlyPending ? `Pendentes (${pendingOrNotDoneCount})` : 'Todos'}
           </button>
-        )}
+        </div>
       </div>
 
       {morning.length > 0 && (

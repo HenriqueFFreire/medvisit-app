@@ -290,7 +290,7 @@ export function RoutesPage() {
     doctors.filter(d =>
       (!filterState || d.address.state === filterState) &&
       (!filterCity || d.address.city === filterCity) &&
-      (!onlyUnvisitedModal || !isVisitedThisMonth(d)) &&
+      (!onlyUnvisitedModal || !isVisitedThisMonth(d, settings?.cycleStartDay ?? 1)) &&
       (!lockedState || d.address.state === lockedState)
     ),
     [doctors, filterState, filterCity, onlyUnvisitedModal, lockedState]
@@ -1287,7 +1287,7 @@ export function RoutesPage() {
                       <div className="ml-3 flex-1">
                         <div className="flex items-center gap-1.5">
                           <p className="font-medium text-gray-900">{doctor.name}</p>
-                          {isVisitedThisMonth(doctor) && (
+                          {isVisitedThisMonth(doctor, settings?.cycleStartDay ?? 1) && (
                             <span className="flex items-center gap-0.5 text-[10px] font-medium text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full shrink-0">
                               <CheckCircle2 className="w-3 h-3" />
                               Visitado

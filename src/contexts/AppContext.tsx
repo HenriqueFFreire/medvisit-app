@@ -17,7 +17,8 @@ const DEFAULT_SETTINGS = {
   workEndTime: '19:00',
   defaultVisitDuration: 10,
   defaultVisitsPerDay: 11,
-  minimumInterval: 15
+  minimumInterval: 15,
+  cycleStartDay: 1
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -53,7 +54,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           workEndTime: data.workEndTime ?? DEFAULT_SETTINGS.workEndTime,
           defaultVisitDuration: data.defaultVisitDuration ?? DEFAULT_SETTINGS.defaultVisitDuration,
           defaultVisitsPerDay: data.defaultVisitsPerDay ?? DEFAULT_SETTINGS.defaultVisitsPerDay,
-          minimumInterval: data.minimumInterval ?? DEFAULT_SETTINGS.minimumInterval
+          minimumInterval: data.minimumInterval ?? DEFAULT_SETTINGS.minimumInterval,
+          cycleStartDay: data.cycleStartDay ?? DEFAULT_SETTINGS.cycleStartDay
         });
       } else {
         const defaultSettings: Settings = { id: 'main', userId: user.id, ...DEFAULT_SETTINGS };
