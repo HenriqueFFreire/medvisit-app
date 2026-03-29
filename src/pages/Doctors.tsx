@@ -507,6 +507,16 @@ export function DoctorsPage() {
         </div>
       </div>
 
+      {/* Filter result count */}
+      {(searchQuery || specialtyFilter || filterDay || filterCity || filterNeighborhood || filterComplement || onlyUnvisited) && (
+        <div className="px-4 py-2 border-t border-gray-100 bg-blue-50 flex items-center justify-between">
+          <span className="text-sm text-blue-700 font-medium">
+            {filteredDoctors.length} médico{filteredDoctors.length !== 1 ? 's' : ''} encontrado{filteredDoctors.length !== 1 ? 's' : ''}
+          </span>
+          <span className="text-xs text-blue-500">de {doctors.length} no total</span>
+        </div>
+      )}
+
       {/* Content */}
       <div className="p-4">
         {filteredDoctors.length === 0 ? (
@@ -659,7 +669,7 @@ export function DoctorsPage() {
               onClick={() => setShowFilterModal(false)}
               className="btn-primary flex-1"
             >
-              Aplicar
+              Ver {filteredDoctors.length} resultado{filteredDoctors.length !== 1 ? 's' : ''}
             </button>
           </div>
         </div>
