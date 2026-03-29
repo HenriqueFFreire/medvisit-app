@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList, Users, History, Settings,
-  MapPin, Pill,
+  MapPin, Pill, CalendarOff,
   CheckCircle2, AlertCircle, BarChart2, CalendarDays
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -67,6 +67,13 @@ export function Dashboard() {
       icon: CalendarDays,
       gradient: 'from-cyan-500 to-cyan-700',
       onClick: () => navigate('/agenda'),
+    },
+    {
+      label: 'Feriados',
+      description: 'Calendário nacional e estadual',
+      icon: CalendarOff,
+      gradient: 'from-amber-500 to-amber-700',
+      onClick: () => navigate('/holidays'),
     },
     {
       label: 'Histórico',
