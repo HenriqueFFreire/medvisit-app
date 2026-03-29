@@ -317,7 +317,8 @@ export function generateWeeklyDistribution(
     }
   }
 
-  // Handle any remaining unassigned doctors
+  // Handle any remaining unassigned doctors — force-assign to least loaded available day,
+  // even if it exceeds visitsPerDay (UI will warn about over-capacity days)
   const unassignedDoctors = doctors.filter(d => !assignedDoctors.has(d.id));
 
   for (const doctor of unassignedDoctors) {
@@ -330,13 +331,23 @@ export function generateWeeklyDistribution(
         doctor.workingHours.some(wh => wh.dayOfWeek === day && wh.period != null);
       const currentLoad = distribution[day].length;
 
-      if (isAvailable && currentLoad < minLoad && currentLoad < visitsPerDay) {
+      // No capacity check — always assign to least loaded available day
+      if (isAvailable && currentLoad < minLoad) {
         minLoad = currentLoad;
         bestDay = day;
       }
     }
 
-    // Only assign if a valid available day was found
+    // If no day with declared availability, assign to the globally least loaded day
+    if (bestDay === null) {
+      for (let day = 1; day <= 5; day++) {
+        if (distribution[day].length < minLoad) {
+          minLoad = distribution[day].length;
+          bestDay = day;
+        }
+      }
+    }
+
     if (bestDay !== null) {
       distribution[bestDay].push(doctor);
       assignedDoctors.add(doctor.id);

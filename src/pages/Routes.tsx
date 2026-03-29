@@ -1522,6 +1522,39 @@ export function RoutesPage() {
             return (
               <DndContext sensors={previewSensors} onDragStart={handlePreviewDragStart} onDragEnd={handlePreviewDragEnd}>
                 <div className="space-y-4">
+                  {/* Over-capacity warning */}
+                  {(() => {
+                    const overDays = previewDays.filter(d => d.panelDoctors.length > visitsPerDay);
+                    if (overDays.length === 0) return null;
+                    return (
+                      <div className="bg-amber-50 border border-amber-300 rounded-xl p-3">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-amber-800">
+                              {overDays.length} dia{overDays.length > 1 ? 's' : ''} acima do limite ({visitsPerDay} visitas/dia)
+                            </p>
+                            <p className="text-xs text-amber-700 mt-0.5 mb-2">
+                              Os médicos abaixo foram realocados automaticamente para não ficarem sem roteiro. Arraste para redistribuir.
+                            </p>
+                            {overDays.map(d => (
+                              <div key={d.dateStr} className="mb-1">
+                                <span className="text-[10px] font-bold text-amber-600 uppercase">
+                                  {format(d.date, "EEE d/MM", { locale: ptBR })}:
+                                </span>
+                                {d.panelDoctors.slice(visitsPerDay).map(doc => (
+                                  <span key={doc.id} className="ml-1.5 text-[10px] bg-amber-100 border border-amber-300 text-amber-800 rounded px-1.5 py-0.5 inline-block">
+                                    {doc.name}
+                                  </span>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-gray-700">{previewDays.length} dias gerados</p>
                     <div className="flex items-center gap-3 text-[10px]">
@@ -1538,12 +1571,16 @@ export function RoutesPage() {
                         <div className="flex gap-2 pb-1" style={{ minWidth: `${days.length * 136}px` }}>
                           {days.map(day => (
                             <PreviewDropCol key={day.dateStr} day={day}>
-                              <div className="bg-gray-50 px-2 py-1.5 text-center border-b border-gray-200">
+                              <div className={`px-2 py-1.5 text-center border-b ${day.panelDoctors.length > visitsPerDay ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
                                 <p className="text-[11px] font-bold text-gray-800 capitalize">
                                   {format(day.date, 'EEE', { locale: ptBR })} {format(day.date, 'd/MM')}
                                 </p>
                                 <p className="text-[10px] text-gray-400">
-                                  {day.panelDoctors.length > 0 && <span className="text-green-600">{day.panelDoctors.length}p</span>}
+                                  {day.panelDoctors.length > 0 && (
+                                    <span className={day.panelDoctors.length > visitsPerDay ? 'text-amber-600 font-semibold' : 'text-green-600'}>
+                                      {day.panelDoctors.length}p{day.panelDoctors.length > visitsPerDay ? ` (+${day.panelDoctors.length - visitsPerDay})` : ''}
+                                    </span>
+                                  )}
                                   {day.panelDoctors.length > 0 && day.suggestionDoctors.length > 0 && ' · '}
                                   {day.suggestionDoctors.length > 0 && <span className="text-orange-500">{day.suggestionDoctors.length}s</span>}
                                   {day.panelDoctors.length === 0 && day.suggestionDoctors.length === 0 && 'vazio'}
