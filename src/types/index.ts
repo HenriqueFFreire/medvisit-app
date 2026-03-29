@@ -54,7 +54,7 @@ export interface Doctor {
 
 export interface Pharmacy {
   id: string;
-  name: string;
+  name?: string;
   phone?: string;
   address: Address;
   coordinates?: Coordinates;

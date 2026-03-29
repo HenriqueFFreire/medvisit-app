@@ -67,7 +67,6 @@ export function PharmacyForm({ pharmacy, onSubmit, onCancel, isLoading }: Pharma
 
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
-    if (!formData.name.trim()) errs.name = 'Nome é obrigatório';
     if (!formData.address.zipCode.trim() || !validateCEP(formData.address.zipCode)) errs.zipCode = 'CEP inválido';
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -83,15 +82,14 @@ export function PharmacyForm({ pharmacy, onSubmit, onCancel, isLoading }: Pharma
     <form onSubmit={handleSubmit} className="space-y-5">
       {/* Name */}
       <div>
-        <label className="label">Nome da Farmácia *</label>
+        <label className="label">Nome da Farmácia <span className="text-gray-400 font-normal">(opcional)</span></label>
         <input
           type="text"
-          className={`input ${errors.name ? 'border-red-500' : ''}`}
+          className="input"
           value={formData.name}
           onChange={e => handleChange('name', e.target.value)}
           placeholder="Farmácia Central"
         />
-        {errors.name && <p className="text-sm text-red-500 mt-1">{errors.name}</p>}
       </div>
 
       {/* Phone */}

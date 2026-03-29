@@ -39,7 +39,7 @@ export function PharmaciesPage() {
 
   const filtered = pharmacies.filter(p =>
     !searchQuery ||
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (p.name?.toLowerCase().includes(searchQuery.toLowerCase())) ||
     p.address.city?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.address.neighborhood?.toLowerCase().includes(searchQuery.toLowerCase())
   );

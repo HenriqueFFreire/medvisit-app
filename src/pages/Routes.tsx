@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Calendar, ChevronDown, ChevronRight, ChevronLeft, MapPin, AlertCircle, Trash2, CheckCircle2, Copy, Users, GripVertical } from 'lucide-react';
+import { Plus, Calendar, ChevronDown, ChevronRight, ChevronLeft, MapPin, AlertCircle, Trash2, CheckCircle2, Copy, Users, GripVertical, Pill } from 'lucide-react';
 import {
   DndContext, DragOverlay,
   useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors,
@@ -10,6 +10,7 @@ import { format, addDays, startOfWeek, startOfMonth, endOfMonth, addMonths, subM
 import { ptBR } from 'date-fns/locale';
 import { useRoutes } from '../hooks/useRoutes';
 import { useDoctors } from '../hooks/useDoctors';
+import { usePharmacies } from '../hooks/usePharmacies';
 import { useApp } from '../contexts/AppContext';
 import { Modal } from '../components/common/Modal';
 import { PageLoading } from '../components/common/Loading';
@@ -31,6 +32,7 @@ interface PreviewDay {
 export function RoutesPage() {
   const { routes, createRoute, deleteRoute, duplicateRoute, isLoading: loadingRoutes, refreshRoutes, getRouteSchedules } = useRoutes();
   const { doctors, isLoading: loadingDoctors } = useDoctors();
+  const { pharmacies, isLoading: loadingPharmacies } = usePharmacies();
   const { settings } = useApp();
 
   const [showNewRouteModal, setShowNewRouteModal] = useState(false);
@@ -43,6 +45,8 @@ export function RoutesPage() {
   const [visitsPerDay, setVisitsPerDay] = useState(settings?.defaultVisitsPerDay || 11);
   const [visitDuration, setVisitDuration] = useState(settings?.defaultVisitDuration || 10);
   const [selectedDoctors, setSelectedDoctors] = useState<string[]>([]);
+  const [selectedPharmacies, setSelectedPharmacies] = useState<string[]>([]);
+  const [pharmaciesPerDay, setPharmaciesPerDay] = useState(3);
   const [routeName, setRouteName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -112,7 +116,7 @@ export function RoutesPage() {
 
   const [weeklyDistribution, setWeeklyDistribution] = useState<WeeklyRouteDistribution | null>(null);
 
-  const isLoading = loadingRoutes || loadingDoctors;
+  const isLoading = loadingRoutes || loadingDoctors || loadingPharmacies;
 
   // Generate weekly distribution when doctors are selected (for week/month types)
   useEffect(() => {
@@ -222,6 +226,8 @@ export function RoutesPage() {
         visitsPerDay,
         visitDuration,
         doctorIds: allDocIds,
+        pharmacyIds: selectedPharmacies.length > 0 ? selectedPharmacies : undefined,
+        pharmaciesPerDay: selectedPharmacies.length > 0 ? pharmaciesPerDay : undefined,
         perDateAssignment: previewDays.map(d => ({
           dateStr: d.dateStr,
           panelDoctorIds: d.panelDoctors.map(doc => doc.id),
@@ -233,6 +239,7 @@ export function RoutesPage() {
       setIsPreview(false);
       setPreviewDays([]);
       setSelectedDoctors([]);
+      setSelectedPharmacies([]);
       setWeeklyDistribution(null);
       await refreshRoutes();
     } catch (err) {
@@ -758,6 +765,7 @@ export function RoutesPage() {
           setPreviewDays([]);
           setWeeklyDistribution(null);
           setSelectedDoctors([]);
+          setSelectedPharmacies([]);
           setCreateError('');
           setOnlyUnvisitedModal(false);
           setLockedState('');
@@ -1346,6 +1354,82 @@ export function RoutesPage() {
                 })()}
               </div>
             </div>
+          {/* Pharmacy Selection */}
+          {pharmacies.length > 0 && (
+            <div className="border-t border-gray-100 pt-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="label mb-0 flex items-center gap-1.5">
+                  <Pill className="w-4 h-4 text-teal-600" />
+                  Farmácias no roteiro <span className="text-gray-400 font-normal text-xs">(opcional)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPharmacies(pharmacies.map(p => p.id))}
+                    className="text-xs text-teal-600 hover:text-teal-700"
+                  >
+                    Todas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPharmacies([])}
+                    className="text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </div>
+
+              {selectedPharmacies.length > 0 && (
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="text-xs text-gray-600">Máx. por dia:</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={pharmaciesPerDay}
+                    onChange={e => setPharmaciesPerDay(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="input w-16 text-sm py-1"
+                  />
+                  <span className="text-xs text-gray-400">farmácia{pharmaciesPerDay !== 1 ? 's' : ''}/dia</span>
+                </div>
+              )}
+
+              <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
+                {pharmacies.map(pharmacy => {
+                  const displayName = pharmacy.name || pharmacy.address.neighborhood || pharmacy.address.city || 'Farmácia';
+                  const subLabel = [pharmacy.address.neighborhood, pharmacy.address.city].filter(Boolean).join(', ');
+                  return (
+                    <label
+                      key={pharmacy.id}
+                      className="flex items-center p-3 hover:bg-teal-50 cursor-pointer border-b border-gray-100 last:border-0"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedPharmacies.includes(pharmacy.id)}
+                        onChange={() => setSelectedPharmacies(prev =>
+                          prev.includes(pharmacy.id)
+                            ? prev.filter(id => id !== pharmacy.id)
+                            : [...prev, pharmacy.id]
+                        )}
+                        className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500"
+                      />
+                      <div className="ml-3 flex-1 min-w-0">
+                        <p className="font-medium text-gray-900 truncate">{displayName}</p>
+                        {subLabel && <p className="text-xs text-gray-500">{subLabel}</p>}
+                      </div>
+                      <Pill className="w-4 h-4 text-teal-400 shrink-0" />
+                    </label>
+                  );
+                })}
+              </div>
+              {selectedPharmacies.length > 0 && (
+                <p className="text-xs text-teal-600 mt-1.5">
+                  {selectedPharmacies.length} farmácia{selectedPharmacies.length !== 1 ? 's' : ''} selecionada{selectedPharmacies.length !== 1 ? 's' : ''} · até {pharmaciesPerDay}/dia (alocadas por proximidade)
+                </p>
+              )}
+            </div>
+          )}
           </div>} {/* end step 1 */}
 
           {/* ── Preview step (with DnD) ── */}

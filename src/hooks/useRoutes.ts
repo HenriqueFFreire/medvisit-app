@@ -6,8 +6,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { generateScheduleFromDoctors, calculateRouteStats, insertDoctorOptimized, type WeeklyRouteDistribution } from '../services/routing';
-import type { Route, RouteType, DailySchedule, ScheduledVisit, RouteStatus, DayStatus, Doctor, Address, WorkingHours } from '../types';
+import { generateScheduleFromDoctors, calculateRouteStats, insertDoctorOptimized, allocatePharmaciesPerDay, generatePharmacyVisits, type WeeklyRouteDistribution } from '../services/routing';
+import type { Route, RouteType, DailySchedule, ScheduledVisit, RouteStatus, DayStatus, Doctor, Pharmacy, Address, WorkingHours } from '../types';
 import { useApp } from '../contexts/AppContext';
 
 interface RescheduledVisitInfo {
@@ -63,6 +63,8 @@ interface CreateRouteInput {
   excludedAfternoons?: string[]; // dates where afternoon shift (T) is excluded
   // Preview-confirmed assignment: overrides distribution logic when provided
   perDateAssignment?: { dateStr: string; panelDoctorIds: string[]; suggestionDoctorIds: string[] }[];
+  pharmacyIds?: string[];      // pharmacies to include in this route
+  pharmaciesPerDay?: number;   // max pharmacies per day; 0 = unlimited (distribute evenly)
 }
 
 function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
@@ -90,6 +92,26 @@ async function loadDoctorById(uid: string, doctorId: string): Promise<Doctor | u
   return snap.exists() ? mapDocToDoctor(snap.id, snap.data() as Record<string, unknown>) : undefined;
 }
 
+function mapDocToPharmacy(id: string, data: Record<string, unknown>): Pharmacy {
+  return {
+    id,
+    name: data.name as string | undefined,
+    phone: data.phone as string | undefined,
+    address: data.address as Pharmacy['address'],
+    coordinates: data.coordinates as Pharmacy['coordinates'],
+    notes: data.notes as string | undefined,
+    createdAt: new Date(data.createdAt as string),
+    updatedAt: new Date(data.updatedAt as string),
+    syncStatus: 'synced',
+    lastRoutedDate: data.lastRoutedDate ? new Date(data.lastRoutedDate as string) : undefined,
+  };
+}
+
+async function loadPharmacyById(uid: string, pharmacyId: string): Promise<Pharmacy | undefined> {
+  const snap = await getDoc(doc(db, 'users', uid, 'pharmacies', pharmacyId));
+  return snap.exists() ? mapDocToPharmacy(snap.id, snap.data() as Record<string, unknown>) : undefined;
+}
+
 async function loadScheduleWithVisits(uid: string, scheduleId: string, scheduleData: Record<string, unknown>): Promise<DailySchedule> {
   const q = query(
     collection(db, 'users', uid, 'scheduled_visits'),
@@ -97,19 +119,28 @@ async function loadScheduleWithVisits(uid: string, scheduleId: string, scheduleD
   );
   const snap = await getDocs(q);
 
-  const doctorIds = [...new Set(snap.docs.map(d => d.data().doctorId as string))];
+  const doctorIds = [...new Set(snap.docs.map(d => d.data().doctorId as string).filter(Boolean))];
   const doctorMap: Record<string, Doctor | undefined> = {};
   await Promise.all(doctorIds.map(async id => {
     doctorMap[id] = await loadDoctorById(uid, id);
   }));
 
+  const pharmacyIds = [...new Set(snap.docs.map(d => d.data().pharmacyId as string).filter(Boolean))];
+  const pharmacyMap: Record<string, Pharmacy | undefined> = {};
+  await Promise.all(pharmacyIds.map(async id => {
+    pharmacyMap[id] = await loadPharmacyById(uid, id);
+  }));
+
   const visits: ScheduledVisit[] = snap.docs.sort((a, b) => (a.data().order as number) - (b.data().order as number)).map(d => {
     const data = d.data() as Record<string, unknown>;
+    const pharmacyId = data.pharmacyId as string | undefined;
     return {
       id: d.id,
       dailyScheduleId: data.dailyScheduleId as string,
-      doctorId: data.doctorId as string,
-      doctor: doctorMap[data.doctorId as string],
+      doctorId: (data.doctorId as string) || '',
+      doctor: data.doctorId ? doctorMap[data.doctorId as string] : undefined,
+      pharmacyId: pharmacyId || undefined,
+      pharmacy: pharmacyId ? pharmacyMap[pharmacyId] : undefined,
       order: data.order as number,
       scheduledTime: data.scheduledTime as string,
       estimatedEndTime: data.estimatedEndTime as string,
@@ -223,13 +254,22 @@ export function useRoutes(): UseRoutesResult {
       if (doctor) allDoctors.push(doctor);
     }));
 
+    // Load selected pharmacies
+    const allPharmacies: Pharmacy[] = [];
+    if (data.pharmacyIds && data.pharmacyIds.length > 0) {
+      await Promise.all(data.pharmacyIds.map(async id => {
+        const pharmacy = await loadPharmacyById(user.id, id);
+        if (pharmacy) allPharmacies.push(pharmacy);
+      }));
+    }
+
     // Separate panel doctors (count toward visitsPerDay) from suggestions (hasPanel === false)
     const panelDoctors = allDoctors.filter(d => d.hasPanel !== false);
     const suggestionDoctors = allDoctors.filter(d => d.hasPanel === false);
 
     interface ScheduleEntry { date: Date; dayOfWeek: number; totalDistance?: number; totalTime?: number; }
     const dailySchedulesData: ScheduleEntry[] = [];
-    const allVisitsData: (Omit<ScheduledVisit, 'doctor'> & { tempScheduleIndex: number })[] = [];
+    const allVisitsData: (Omit<ScheduledVisit, 'doctor' | 'pharmacy'> & { tempScheduleIndex: number })[] = [];
     let totalDistance = 0;
     let totalTime = 0;
     let routeStart: Date;
@@ -239,7 +279,7 @@ export function useRoutes(): UseRoutesResult {
     const wEnd = settings?.workEndTime || '19:00';
     const minInterval = settings?.minimumInterval || 15;
 
-    const addDay = (date: Date, dayOfWeek: number, dayPanelDoctors: Doctor[], daySuggestionDoctors: Doctor[]) => {
+    const addDay = (date: Date, dayOfWeek: number, dayPanelDoctors: Doctor[], daySuggestionDoctors: Doctor[], dayPharmacies: Pharmacy[] = []) => {
       // Panel doctors fill visitsPerDay slots
       const panelVisits = generateScheduleFromDoctors(dayPanelDoctors, date, data.visitDuration, wStart, wEnd, minInterval);
       // Suggestion doctors get scheduled after (ignoring visitsPerDay limit)
@@ -251,6 +291,20 @@ export function useRoutes(): UseRoutesResult {
       dailySchedulesData.push({ date, dayOfWeek, totalDistance: stats.totalDistance, totalTime: stats.totalTime });
       panelVisits.forEach(v => allVisitsData.push({ ...v, id: '', dailyScheduleId: '', isSuggestion: false, tempScheduleIndex: idx }));
       suggestionVisits.forEach(v => allVisitsData.push({ ...v, id: '', dailyScheduleId: '', isSuggestion: true, tempScheduleIndex: idx }));
+
+      // Pharmacy visits — scheduled after doctors, ordered by proximity
+      if (dayPharmacies.length > 0) {
+        const allDocVisits = [...panelVisits, ...suggestionVisits];
+        const lastVisit = allDocVisits.at(-1);
+        const startAfterTime = lastVisit ? lastVisit.estimatedEndTime : wStart;
+        const startAfterCoords = lastVisit?.doctor?.coordinates;
+        const startOrder = allDocVisits.length + 1;
+        const pharmacyVisits = generatePharmacyVisits(
+          dayPharmacies, startAfterTime, startAfterCoords,
+          data.visitDuration, wEnd, minInterval, startOrder
+        );
+        pharmacyVisits.forEach(v => allVisitsData.push({ ...v, id: '', dailyScheduleId: '', tempScheduleIndex: idx }));
+      }
     };
 
     const activeDays = data.selectedDays ?? [1, 2, 3, 4, 5];
@@ -282,17 +336,31 @@ export function useRoutes(): UseRoutesResult {
       return filtered;
     };
 
+    // Helper: build day-doctor list for pharmacy allocation, then allocate
+    const buildPharmacyMap = (dayDoctorList: { dateStr: string; doctors: Doctor[] }[]): Map<string, Pharmacy[]> => {
+      if (allPharmacies.length === 0) return new Map();
+      return allocatePharmaciesPerDay(allPharmacies, dayDoctorList, data.pharmaciesPerDay ?? 0);
+    };
+
     if (data.perDateAssignment && data.perDateAssignment.length > 0) {
       const sorted = [...data.perDateAssignment].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
       routeStart = new Date(sorted[0].dateStr + 'T12:00:00');
       routeEnd = new Date(sorted[sorted.length - 1].dateStr + 'T12:00:00');
+
+      const dayDoctorList = sorted.map(day => ({
+        dateStr: day.dateStr,
+        doctors: allDoctors.filter(d => [...day.panelDoctorIds, ...day.suggestionDoctorIds].includes(d.id)),
+      }));
+      const pharmacyMap = buildPharmacyMap(dayDoctorList);
+
       for (const day of sorted) {
         const date = new Date(day.dateStr + 'T12:00:00');
         const dow = date.getDay();
         const dayPanel = allDoctors.filter(d => day.panelDoctorIds.includes(d.id));
         const daySuggestions = allDoctors.filter(d => day.suggestionDoctorIds.includes(d.id));
-        if (dayPanel.length > 0 || daySuggestions.length > 0)
-          addDay(date, dow, dayPanel, daySuggestions);
+        const dayPharmacies = pharmacyMap.get(day.dateStr) ?? [];
+        if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
+          addDay(date, dow, dayPanel, daySuggestions, dayPharmacies);
       }
     } else if (data.routeType === 'day') {
       routeStart = data.startDate;
@@ -302,14 +370,36 @@ export function useRoutes(): UseRoutesResult {
       if (!data.excludedDates?.includes(dateStr)) {
         const dayPanel = applyShiftExclusions(panelDoctors, dateStr, dow);
         const daySuggestions = applyShiftExclusions(suggestionDoctors, dateStr, dow);
-        if (dayPanel.length > 0 || daySuggestions.length > 0)
-          addDay(data.startDate, dow, dayPanel, daySuggestions);
+        const pharmacyMap = buildPharmacyMap([{ dateStr, doctors: [...dayPanel, ...daySuggestions] }]);
+        const dayPharmacies = pharmacyMap.get(dateStr) ?? [];
+        if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
+          addDay(data.startDate, dow, dayPanel, daySuggestions, dayPharmacies);
       }
 
     } else if (data.routeType === 'week') {
       const numWeeks = data.numberOfWeeks ?? 1;
       routeStart = startOfWeek(data.startDate, { weekStartsOn: 1 });
       routeEnd = endOfWeek(addDays(routeStart, (numWeeks - 1) * 7), { weekStartsOn: 1 });
+
+      // Pre-compute day-doctor list for pharmacy allocation
+      const dayDoctorList: { dateStr: string; doctors: Doctor[] }[] = [];
+      for (let weekIdx = 0; weekIdx < numWeeks; weekIdx++) {
+        const weekStart = addDays(routeStart, weekIdx * 7);
+        const weekDistrib = data.multiWeekDistributions?.[weekIdx] ?? data.weeklyDistribution;
+        for (let i = 0; i < 5; i++) {
+          const date = addDays(weekStart, i);
+          const dow = date.getDay();
+          if (!activeDays.includes(dow)) continue;
+          const dateStr = date.toISOString().split('T')[0];
+          if (data.excludedDates?.includes(dateStr)) continue;
+          const basePanel = weekDistrib?.[dow] || panelDoctors;
+          const dp = applyShiftExclusions(basePanel, dateStr, dow);
+          const ds = applyShiftExclusions(suggestionDoctors, dateStr, dow);
+          dayDoctorList.push({ dateStr, doctors: [...dp, ...ds] });
+        }
+      }
+      const pharmacyMap = buildPharmacyMap(dayDoctorList);
+
       for (let weekIdx = 0; weekIdx < numWeeks; weekIdx++) {
         const weekStart = addDays(routeStart, weekIdx * 7);
         const weekDistrib = data.multiWeekDistributions?.[weekIdx] ?? data.weeklyDistribution;
@@ -322,8 +412,9 @@ export function useRoutes(): UseRoutesResult {
             const basePanel = weekDistrib?.[dow] || panelDoctors;
             const dayPanel = applyShiftExclusions(basePanel, dateStr, dow);
             const daySuggestions = applyShiftExclusions(suggestionDoctors, dateStr, dow);
-            if (dayPanel.length > 0 || daySuggestions.length > 0)
-              addDay(date, dow, dayPanel, daySuggestions);
+            const dayPharmacies = pharmacyMap.get(dateStr) ?? [];
+            if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
+              addDay(date, dow, dayPanel, daySuggestions, dayPharmacies);
           }
         }
       }
@@ -334,6 +425,25 @@ export function useRoutes(): UseRoutesResult {
       routeStart = monthStart;
       routeEnd = monthEnd;
       const activeWeeks = data.selectedWeeks ?? [1, 2, 3, 4, 5];
+
+      // Pre-compute day-doctor list for pharmacy allocation
+      const dayDoctorList: { dateStr: string; doctors: Doctor[] }[] = [];
+      let cur = monthStart;
+      while (cur <= monthEnd) {
+        const dow = cur.getDay();
+        if (dow >= 1 && dow <= 5 && activeDays.includes(dow) && activeWeeks.includes(weekOfMonth(cur))) {
+          const dateStr = cur.toISOString().split('T')[0];
+          if (!data.excludedDates?.includes(dateStr)) {
+            const basePanel = data.weeklyDistribution?.[dow] || panelDoctors;
+            const dp = applyShiftExclusions(basePanel, dateStr, dow);
+            const ds = applyShiftExclusions(suggestionDoctors, dateStr, dow);
+            dayDoctorList.push({ dateStr, doctors: [...dp, ...ds] });
+          }
+        }
+        cur = addDays(cur, 1);
+      }
+      const pharmacyMap = buildPharmacyMap(dayDoctorList);
+
       let current = monthStart;
       while (current <= monthEnd) {
         const dow = current.getDay();
@@ -343,8 +453,9 @@ export function useRoutes(): UseRoutesResult {
             const basePanel = data.weeklyDistribution?.[dow] || panelDoctors;
             const dayPanel = applyShiftExclusions(basePanel, dateStr, dow);
             const daySuggestions = applyShiftExclusions(suggestionDoctors, dateStr, dow);
-            if (dayPanel.length > 0 || daySuggestions.length > 0)
-              addDay(current, dow, dayPanel, daySuggestions);
+            const dayPharmacies = pharmacyMap.get(dateStr) ?? [];
+            if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
+              addDay(current, dow, dayPanel, daySuggestions, dayPharmacies);
           }
         }
         current = addDays(current, 1);
@@ -392,7 +503,8 @@ export function useRoutes(): UseRoutesResult {
       const visitRef = doc(collection(db, 'users', user.id, 'scheduled_visits'));
       writes.push({ ref: visitRef, data: {
         dailyScheduleId: scheduleRefs[visit.tempScheduleIndex],
-        doctorId: visit.doctorId,
+        doctorId: visit.pharmacyId ? null : (visit.doctorId || null),
+        pharmacyId: visit.pharmacyId ?? null,
         order: visit.order,
         scheduledTime: visit.scheduledTime,
         estimatedEndTime: visit.estimatedEndTime,
@@ -425,6 +537,18 @@ export function useRoutes(): UseRoutesResult {
       });
     }
     await doctorUpdateBatch.commit();
+
+    // Update lastRoutedDate on all pharmacies in this route
+    if (allPharmacies.length > 0) {
+      const pharmUpdateBatch = writeBatch(db);
+      for (const pharmacy of allPharmacies) {
+        pharmUpdateBatch.update(doc(db, 'users', user.id, 'pharmacies', pharmacy.id), {
+          lastRoutedDate: today,
+          updatedAt: now
+        });
+      }
+      await pharmUpdateBatch.commit();
+    }
 
     await loadRoutes();
 

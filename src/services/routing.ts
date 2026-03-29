@@ -1,4 +1,4 @@
-import type { Coordinates, Doctor, ScheduledVisit, WorkingHours } from '../types';
+import type { Coordinates, Doctor, Pharmacy, ScheduledVisit, WorkingHours } from '../types';
 import { PERIOD_TIMES } from '../types';
 
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
@@ -626,6 +626,166 @@ export function recalculateScheduleTimes(
     workEndTime,
     minimumInterval
   );
+}
+
+// Allocate pharmacies to days based on proximity to each day's doctor centroid
+export function allocatePharmaciesPerDay(
+  pharmacies: Pharmacy[],
+  dayDoctors: { dateStr: string; doctors: Doctor[] }[],
+  maxPerDay: number // 0 = unlimited
+): Map<string, Pharmacy[]> {
+  const result = new Map<string, Pharmacy[]>();
+  for (const day of dayDoctors) result.set(day.dateStr, []);
+
+  if (pharmacies.length === 0 || dayDoctors.length === 0) return result;
+
+  // Compute centroid for each day from its doctors
+  const dayCentroids: (Coordinates | null)[] = dayDoctors.map(day => {
+    const withCoords = day.doctors.filter(d => d.coordinates);
+    if (withCoords.length === 0) return null;
+    return {
+      latitude: withCoords.reduce((s, d) => s + d.coordinates!.latitude, 0) / withCoords.length,
+      longitude: withCoords.reduce((s, d) => s + d.coordinates!.longitude, 0) / withCoords.length,
+    };
+  });
+
+  const withCoords = pharmacies.filter(p => p.coordinates);
+  const withoutCoords = pharmacies.filter(p => !p.coordinates);
+
+  // Build all pharmacy-day distance pairs
+  interface Pair { pi: number; di: number; distance: number }
+  const pairs: Pair[] = [];
+  for (let pi = 0; pi < withCoords.length; pi++) {
+    for (let di = 0; di < dayDoctors.length; di++) {
+      const centroid = dayCentroids[di];
+      if (!centroid) continue;
+      pairs.push({ pi, di, distance: haversineDistance(withCoords[pi].coordinates!, centroid) });
+    }
+  }
+  pairs.sort((a, b) => a.distance - b.distance);
+
+  // Greedily assign each pharmacy to its nearest day with capacity
+  const assigned = new Set<number>();
+  for (const { pi, di } of pairs) {
+    if (assigned.has(pi)) continue;
+    const dateStr = dayDoctors[di].dateStr;
+    const list = result.get(dateStr)!;
+    if (maxPerDay > 0 && list.length >= maxPerDay) continue;
+    list.push(withCoords[pi]);
+    assigned.add(pi);
+  }
+
+  // Pharmacies without coordinates: assign to day with fewest
+  for (const pharmacy of withoutCoords) {
+    let bestDate = dayDoctors[0].dateStr;
+    let minCount = Infinity;
+    for (const day of dayDoctors) {
+      const count = result.get(day.dateStr)!.length;
+      if (maxPerDay > 0 && count >= maxPerDay) continue;
+      if (count < minCount) { minCount = count; bestDate = day.dateStr; }
+    }
+    result.get(bestDate)!.push(pharmacy);
+  }
+
+  return result;
+}
+
+// Generate pharmacy visits to append after doctor visits in a day schedule
+export function generatePharmacyVisits(
+  pharmacies: Pharmacy[],
+  startAfterTime: string,
+  startAfterCoords: Coordinates | undefined,
+  visitDuration: number,
+  workEndTime: string,
+  minimumInterval: number,
+  startOrder: number
+): Omit<ScheduledVisit, 'id' | 'dailyScheduleId'>[] {
+  if (pharmacies.length === 0) return [];
+
+  // Sort by nearest neighbor from last doctor position
+  const ordered = optimizePharmacyOrder(pharmacies, startAfterCoords);
+
+  const visits: Omit<ScheduledVisit, 'id' | 'dailyScheduleId'>[] = [];
+  let currentMinutes = parseTimeStr(startAfterTime);
+  const endMinutes = parseTimeStr(workEndTime);
+  let prevCoords = startAfterCoords;
+
+  for (let i = 0; i < ordered.length; i++) {
+    const pharmacy = ordered[i];
+    if (currentMinutes + visitDuration > endMinutes) break;
+
+    let travelTime = 0;
+    let distance = 0;
+    if (prevCoords && pharmacy.coordinates) {
+      distance = haversineDistance(prevCoords, pharmacy.coordinates);
+      travelTime = estimateTravelTime(distance);
+    }
+
+    currentMinutes += travelTime;
+    if (currentMinutes + visitDuration > endMinutes) break;
+
+    visits.push({
+      doctorId: '',
+      pharmacyId: pharmacy.id,
+      pharmacy,
+      order: startOrder + i,
+      scheduledTime: minsToTimeStr(currentMinutes),
+      estimatedEndTime: minsToTimeStr(currentMinutes + visitDuration),
+      estimatedTravelTime: travelTime,
+      estimatedDistance: distance,
+      status: 'pending',
+      isSuggestion: false,
+    });
+
+    currentMinutes += visitDuration + minimumInterval;
+    prevCoords = pharmacy.coordinates;
+  }
+
+  return visits;
+}
+
+function optimizePharmacyOrder(pharmacies: Pharmacy[], startPoint?: Coordinates): Pharmacy[] {
+  if (pharmacies.length <= 1) return pharmacies;
+  const withCoords = pharmacies.filter(p => p.coordinates);
+  const withoutCoords = pharmacies.filter(p => !p.coordinates);
+  if (withCoords.length === 0) return pharmacies;
+
+  const visited = new Set<string>();
+  const result: Pharmacy[] = [];
+  let current: Coordinates = startPoint || withCoords[0].coordinates!;
+
+  if (!startPoint) {
+    result.push(withCoords[0]);
+    visited.add(withCoords[0].id);
+  }
+
+  while (result.length < withCoords.length) {
+    let nearest: Pharmacy | null = null;
+    let nearestDist = Infinity;
+    for (const p of withCoords) {
+      if (visited.has(p.id) || !p.coordinates) continue;
+      const d = haversineDistance(current, p.coordinates);
+      if (d < nearestDist) { nearestDist = d; nearest = p; }
+    }
+    if (nearest) {
+      result.push(nearest);
+      visited.add(nearest.id);
+      current = nearest.coordinates!;
+    }
+  }
+
+  return [...result, ...withoutCoords];
+}
+
+function parseTimeStr(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function minsToTimeStr(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 }
 
 // Generate Google Maps navigation URL

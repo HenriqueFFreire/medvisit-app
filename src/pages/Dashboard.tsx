@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList, Users, History, Settings,
-  UserPlus, Calendar, MapPin,
+  Calendar, MapPin, Pill,
   CheckCircle2, AlertCircle, BarChart2, CalendarDays
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -66,11 +66,11 @@ export function Dashboard() {
       onClick: () => navigate('/routes'),
     },
     {
-      label: 'Novo Médico',
-      description: 'Cadastrar novo médico',
-      icon: UserPlus,
+      label: 'Farmácias',
+      description: 'Gerenciar farmácias',
+      icon: Pill,
       gradient: 'from-teal-500 to-teal-700',
-      onClick: () => navigate('/doctors/new'),
+      onClick: () => navigate('/pharmacies'),
     },
     {
       label: 'Histórico',
@@ -113,7 +113,10 @@ export function Dashboard() {
           <div>
             <h1 className="text-xl font-bold tracking-tight">MedVisit</h1>
             <p className="text-blue-200 text-sm">
-              Olá, <span className="font-medium text-white">{firstName}</span> —{' '}
+              {firstName !== 'Olá'
+                ? <>Olá, <span className="font-medium text-white">{firstName}</span> —{' '}</>
+                : 'Olá — '
+              }
               {format(today, "EEEE, d 'de' MMMM", { locale: ptBR })}
             </p>
           </div>

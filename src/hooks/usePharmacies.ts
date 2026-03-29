@@ -15,7 +15,7 @@ interface UsePharmaciesResult {
 }
 
 export interface PharmacyInput {
-  name: string;
+  name?: string;
   phone?: string;
   address: Address;
   notes?: string;
@@ -45,7 +45,7 @@ export function usePharmacies(): UsePharmaciesResult {
     if (!user) return;
     setIsLoading(true);
     try {
-      const q = query(collection(db, 'users', user.id, 'pharmacies'), orderBy('name'));
+      const q = query(collection(db, 'users', user.id, 'pharmacies'), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
       setPharmacies(snap.docs.map(d => mapToPharmacy(d.id, d.data() as Record<string, unknown>)));
     } finally {
@@ -77,7 +77,7 @@ export function usePharmacies(): UsePharmaciesResult {
 
     const ref = await addDoc(collection(db, 'users', user.id, 'pharmacies'), docData);
     const pharmacy = mapToPharmacy(ref.id, { ...docData, id: ref.id });
-    setPharmacies(prev => [...prev, pharmacy].sort((a, b) => a.name.localeCompare(b.name)));
+    setPharmacies(prev => [pharmacy, ...prev]);
     return pharmacy;
   };
 

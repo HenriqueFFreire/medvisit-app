@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, Clock, GripVertical, Circle, ClipboardList } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, List, CalendarDays, CheckCircle2, XCircle, GripVertical, Circle, ClipboardList } from 'lucide-react';
 import { format, addDays, addMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isToday, isSameMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -159,7 +159,7 @@ export function AgendaPage() {
           <WeekView currentDate={currentDate} weekSchedules={weekSchedules} onDayClick={handleDayClick} onMoveVisit={handleMoveVisit} hasRouteForWeek={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
         ))}
         {view === 'day' && (
-          <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} onReloadDay={() => loadDaySchedule(currentDate)} hasRoute={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
+          <DayView date={currentDate} schedule={daySchedule} isLoading={isLoadingDay} onUpdateVisit={handleUpdateVisit} hasRoute={!!findRouteForDate(currentDate)} onGoToRoutes={() => navigate('/routes')} />
         )}
       </div>
     </div>
@@ -435,12 +435,11 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, hasRout
 }
 
 // ── Day View ──
-function DayView({ date, schedule, isLoading, onUpdateVisit, onReloadDay, hasRoute, onGoToRoutes }: {
+function DayView({ date, schedule, isLoading, onUpdateVisit, hasRoute, onGoToRoutes }: {
   date: Date;
   schedule: DailySchedule | null;
   isLoading: boolean;
   onUpdateVisit: (visitId: string, status: VisitStatus, doctorId?: string) => Promise<void>;
-  onReloadDay: () => void;
   hasRoute: boolean;
   onGoToRoutes: () => void;
 }) {
