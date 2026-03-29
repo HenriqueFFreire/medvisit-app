@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList, Users, History, Settings,
-  Calendar, MapPin, Pill,
+  MapPin, Pill,
   CheckCircle2, AlertCircle, BarChart2, CalendarDays
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -34,15 +34,6 @@ export function Dashboard() {
 
   const tiles = [
     {
-      label: 'Roteiro',
-      description: 'Ver e gerenciar roteiros',
-      icon: ClipboardList,
-      gradient: 'from-blue-500 to-blue-700',
-      badge: unroutedCount > 0 ? unroutedCount : undefined,
-      badgeColor: 'bg-orange-400',
-      onClick: () => navigate('/routes'),
-    },
-    {
       label: 'Médicos',
       description: `${doctors.length} cadastrados`,
       icon: Users,
@@ -52,25 +43,27 @@ export function Dashboard() {
       onClick: () => navigate('/doctors'),
     },
     {
-      label: 'Agenda',
-      description: 'Calendário de visitas',
-      icon: CalendarDays,
-      gradient: 'from-cyan-500 to-cyan-700',
-      onClick: () => navigate('/agenda'),
-    },
-    {
-      label: 'Novo Roteiro',
-      description: 'Criar roteiro semanal',
-      icon: Calendar,
-      gradient: 'from-orange-400 to-orange-600',
-      onClick: () => navigate('/routes'),
-    },
-    {
       label: 'Farmácias',
       description: 'Gerenciar farmácias',
       icon: Pill,
       gradient: 'from-teal-500 to-teal-700',
       onClick: () => navigate('/pharmacies'),
+    },
+    {
+      label: 'Roteiro',
+      description: 'Ver e gerenciar roteiros',
+      icon: ClipboardList,
+      gradient: 'from-blue-500 to-blue-700',
+      badge: unroutedCount > 0 ? unroutedCount : undefined,
+      badgeColor: 'bg-orange-400',
+      onClick: () => navigate('/routes'),
+    },
+    {
+      label: 'Agenda',
+      description: 'Calendário de visitas',
+      icon: CalendarDays,
+      gradient: 'from-cyan-500 to-cyan-700',
+      onClick: () => navigate('/agenda'),
     },
     {
       label: 'Histórico',
