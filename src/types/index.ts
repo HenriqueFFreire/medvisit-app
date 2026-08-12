@@ -15,6 +15,7 @@ export interface AuthState {
 
 // Doctor types
 export type AttendancePeriod = 'M' | 'T' | 'MT' | 'AG'; // M = Manhã, T = Tarde, MT = Dia inteiro, AG = Agendado
+export type DoctorCategory = 'A' | 'B' | 'C';
 
 export interface WorkingHours {
   dayOfWeek: number; // 0 = Sunday, 1 = Monday, etc.
@@ -33,14 +34,23 @@ export const PERIOD_TIMES = {
   AG: { start: '', end: '', label: 'Agendado (horário específico)' }
 } as const;
 
+export interface DoctorAddressEntry {
+  id: string;
+  label?: string;
+  address: Address;
+  isPrimary?: boolean;
+}
+
 export interface Doctor {
   id: string;
   name: string;
   crm: string; // Format: 000000/UF
   specialty?: string;
+  category?: DoctorCategory;
   phone?: string;
   email?: string;
   address: Address;
+  addresses?: DoctorAddressEntry[];
   coordinates?: Coordinates;
   workingHours: WorkingHours[];
   notes?: string;
