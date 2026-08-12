@@ -19,6 +19,7 @@ export type DoctorCategory = 'A' | 'B' | 'C';
 
 export interface WorkingHours {
   dayOfWeek: number; // 0 = Sunday, 1 = Monday, etc.
+  addressId?: string; // Address where the doctor attends on this day
   period?: AttendancePeriod; // M, T, or AG
   specificTime?: string; // HH:mm format - only used when period is 'AG'
   // Legacy fields for backwards compatibility

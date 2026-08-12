@@ -159,6 +159,7 @@ export function useDoctors(): UseDoctorsResult {
       coordinates: coordinates ?? null,
       workingHours: data.workingHours.map(wh => ({
         dayOfWeek: wh.dayOfWeek,
+        addressId: wh.addressId ?? null,
         period: wh.period ?? null,
         specificTime: wh.specificTime ?? null
       })),
@@ -233,6 +234,7 @@ export function useDoctors(): UseDoctorsResult {
     if (data.hasPanel !== undefined) updates.hasPanel = data.hasPanel;
     if (data.workingHours !== undefined) updates.workingHours = data.workingHours.map(wh => ({
       dayOfWeek: wh.dayOfWeek,
+      addressId: wh.addressId ?? null,
       period: wh.period ?? null,
       specificTime: wh.specificTime ?? null,
       startTime: wh.startTime ?? null,

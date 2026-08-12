@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Plus, Minus, Loader2 } from 'lucide-react';
 import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory } from '../../types';
 import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, BRAZILIAN_STATES, PERIOD_TIMES } from '../../types';
@@ -60,7 +60,10 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     email: doctor?.email || '',
     address: initialAddressState.primaryAddress,
     addresses: initialAddressState.addresses,
-    workingHours: doctor?.workingHours || DEFAULT_WORKING_HOURS,
+    workingHours: (doctor?.workingHours || DEFAULT_WORKING_HOURS).map(wh => ({
+      ...wh,
+      addressId: wh.addressId ?? initialAddressState.addresses.find(entry => entry.isPrimary)?.id
+    })),
     notes: doctor?.notes || '',
     hasPanel: doctor?.hasPanel ?? true
   }), [doctor, initialAddressState]);
@@ -75,49 +78,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
   const [crmWarning, setCrmWarning] = useState<string | null>(null);
-  const [isLoadingCEP, setIsLoadingCEP] = useState(false);
-  const [showCepSuggestions, setShowCepSuggestions] = useState(false);
-  const [showComplementSuggestions, setShowComplementSuggestions] = useState(false);
-  const cepSuggestionRef = useRef<HTMLDivElement>(null);
-  const suggestionSelectedRef = useRef(false);
-  const complementSuggestionSelectedRef = useRef(false);
-
-  // Unique addresses already registered (excluding the doctor being edited)
-  const knownAddresses = useMemo(() => {
-    const seen = new Set<string>();
-    return doctors
-      .filter(d => d.id !== doctor?.id && d.address?.zipCode)
-      .reduce<Array<Address & { doctorName: string }>>((acc, d) => {
-        const key = d.address.zipCode.replace(/\D/g, '');
-        if (!seen.has(key)) {
-          seen.add(key);
-          acc.push({ ...d.address, doctorName: d.name });
-        }
-        return acc;
-      }, []);
-  }, [doctors, doctor?.id]);
-
-  const cepSuggestions = useMemo(() => {
-    const raw = formData.address.zipCode.replace(/\D/g, '');
-    if (!raw) return knownAddresses.slice(0, 8);
-    return knownAddresses
-      .filter(a => a.zipCode.replace(/\D/g, '').startsWith(raw))
-      .slice(0, 8);
-  }, [formData.address.zipCode, knownAddresses]);
-
-  const complementSuggestions = useMemo(() => {
-    const allComplements = [...new Set(
-      doctors
-        .filter(d => d.id !== doctor?.id && d.address?.complement)
-        .map(d => d.address.complement as string)
-    )].sort();
-    const typed = formData.address.complement?.toLowerCase() || '';
-    if (!typed) return allComplements.slice(0, 8);
-    return allComplements
-      .filter(c => c.toLowerCase().includes(typed))
-      .slice(0, 8);
-  }, [formData.address.complement, doctors, doctor?.id]);
-
+  const [loadingAddressId, setLoadingAddressId] = useState<string | null>(null);
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
@@ -130,25 +91,6 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
         : null;
       setCrmWarning(existing ? `CRM já cadastrado: ${existing.name}` : null);
     }
-  };
-
-  const handleAddressChange = (field: keyof Address, value: string) => {
-    setFormData(prev => {
-      const address = { ...prev.address, [field]: value };
-
-      // `addresses` also contains the primary address. Keep both representations
-      // in sync so validation and persistence don't see a stale/empty address.
-      const addresses = (prev.addresses ?? []).map(entry =>
-        entry.isPrimary
-          ? { ...entry, address: { ...entry.address, [field]: value } }
-          : entry
-      );
-
-      return { ...prev, address, addresses };
-    });
-
-    if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
-    if (errors.addresses) setErrors(prev => ({ ...prev, addresses: '' }));
   };
 
   const addAddress = () => {
@@ -167,7 +109,11 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       return {
         ...prev,
         addresses: [...currentAddresses, newEntry],
-        address: currentAddresses.length === 0 ? { ...newEntry.address } : prev.address
+        address: currentAddresses.length === 0 ? { ...newEntry.address } : prev.address,
+        workingHours: [
+          ...prev.workingHours,
+          ...DEFAULT_WORKING_HOURS.map(wh => ({ ...wh, addressId: newEntry.id }))
+        ]
       };
     });
   };
@@ -184,19 +130,53 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     });
   };
 
+  const fillAddressFromCEP = async (entry: DoctorAddressEntry) => {
+    if (!validateCEP(entry.address.zipCode)) return;
+
+    setLoadingAddressId(entry.id);
+    try {
+      const addressData = await getAddressFromCEP(entry.address.zipCode);
+      if (addressData) {
+        updateAddressEntry(entry.id, {
+          address: {
+            ...entry.address,
+            street: addressData.street || entry.address.street,
+            neighborhood: addressData.neighborhood || entry.address.neighborhood,
+            city: addressData.city || entry.address.city,
+            state: addressData.state || entry.address.state
+          }
+        });
+      }
+    } finally {
+      setLoadingAddressId(null);
+    }
+  };
+
   const removeAddressEntry = (id: string) => {
     setFormData(prev => {
       const nextAddresses = (prev.addresses ?? []).filter(entry => entry.id !== id);
       const fallback = nextAddresses[0];
+      const normalizedAddresses = nextAddresses.map((entry, index) => ({
+        ...entry,
+        isPrimary: index === 0
+      }));
       return {
         ...prev,
-        addresses: nextAddresses.length > 0 ? nextAddresses.map((entry, index) => ({
-          ...entry,
-          isPrimary: index === 0 || entry.isPrimary
-        })) : [],
-        address: fallback ? { ...fallback.address } : prev.address
+        addresses: normalizedAddresses,
+        address: fallback ? { ...fallback.address } : prev.address,
+        workingHours: prev.workingHours.filter(wh => wh.addressId !== id)
       };
     });
+    setErrors(prev => ({
+      ...prev,
+      addresses: '',
+      street: '',
+      number: '',
+      neighborhood: '',
+      city: '',
+      state: '',
+      zipCode: ''
+    }));
   };
 
   const setPrimaryAddress = (id: string) => {
@@ -214,50 +194,6 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     });
   };
 
-  const applyCepSuggestion = (addr: Address) => {
-    suggestionSelectedRef.current = true;
-    setFormData(prev => ({
-      ...prev,
-      address: {
-        ...prev.address,
-        zipCode: addr.zipCode,
-        street: addr.street,
-        neighborhood: addr.neighborhood,
-        city: addr.city,
-        state: addr.state,
-        complement: addr.complement || ''
-      }
-    }));
-    setShowCepSuggestions(false);
-    if (errors.zipCode) setErrors(prev => ({ ...prev, zipCode: '' }));
-  };
-
-  const handleCEPBlur = async () => {
-    const cep = formData.address.zipCode;
-    if (!validateCEP(cep)) return;
-
-    setIsLoadingCEP(true);
-    try {
-      const addressData = await getAddressFromCEP(cep);
-      if (addressData) {
-        setFormData(prev => ({
-          ...prev,
-          address: {
-            ...prev.address,
-            street: addressData.street || prev.address.street,
-            neighborhood: addressData.neighborhood || prev.address.neighborhood,
-            city: addressData.city || prev.address.city,
-            state: addressData.state || prev.address.state
-          }
-        }));
-      }
-    } catch (error) {
-      console.error('Error fetching CEP:', error);
-    } finally {
-      setIsLoadingCEP(false);
-    }
-  };
-
   const handleWorkingHoursChange = (index: number, field: keyof WorkingHours, value: string | number | undefined) => {
     setFormData(prev => ({
       ...prev,
@@ -273,15 +209,23 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     }));
   };
 
-  const addWorkingHours = () => {
-    const usedDays = formData.workingHours.map(wh => wh.dayOfWeek);
-    const availableDay = [1, 2, 3, 4, 5, 6, 0].find(d => !usedDays.includes(d));
-    if (availableDay !== undefined) {
-      setFormData(prev => ({
+  const addWorkingHours = (addressId?: string) => {
+    setFormData(prev => {
+      const primaryAddressId = prev.addresses?.find(entry => entry.isPrimary)?.id;
+      const targetAddressId = addressId ?? primaryAddressId;
+      const usedDaysAtAddress = prev.workingHours
+        .filter(wh => (wh.addressId ?? primaryAddressId) === targetAddressId)
+        .map(wh => wh.dayOfWeek);
+      const availableDay = [1, 2, 3, 4, 5, 6, 0].find(day => !usedDaysAtAddress.includes(day)) ?? 1;
+
+      return {
         ...prev,
-        workingHours: [...prev.workingHours, { dayOfWeek: availableDay }]
-      }));
-    }
+        workingHours: [...prev.workingHours, {
+          dayOfWeek: availableDay,
+          addressId: targetAddressId
+        }]
+      };
+    });
   };
 
   const removeWorkingHours = (index: number) => {
@@ -506,164 +450,6 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
         {errors.addresses && <p className="text-sm text-red-500">{errors.addresses}</p>}
 
-        <div className="space-y-4 rounded-xl border border-gray-200 p-4 bg-gray-50">
-          <div className="flex items-center justify-between">
-            <h5 className="text-sm font-semibold text-gray-700">Endereço principal</h5>
-            <span className="text-xs text-gray-500">Usado como referência principal</span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="label">CEP *</label>
-            <div className="relative" ref={cepSuggestionRef}>
-              <input
-                type="text"
-                className={`input ${errors.zipCode ? 'border-red-500' : ''}`}
-                value={formData.address.zipCode}
-                onChange={e => { handleAddressChange('zipCode', formatCEP(e.target.value)); setShowCepSuggestions(true); }}
-                onFocus={() => setShowCepSuggestions(true)}
-                onBlur={() => {
-                  setTimeout(() => setShowCepSuggestions(false), 150);
-                  if (!suggestionSelectedRef.current) handleCEPBlur();
-                  suggestionSelectedRef.current = false;
-                }}
-                onKeyDown={e => { if (e.key === 'Escape') setShowCepSuggestions(false); }}
-                placeholder="00000-000"
-                maxLength={9}
-                autoComplete="off"
-              />
-              {isLoadingCEP && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-                </div>
-              )}
-              {showCepSuggestions && cepSuggestions.length > 0 && (
-                <div className="absolute z-50 top-full left-0 mt-1 w-80 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
-                  <p className="text-xs text-gray-400 px-3 pt-2 pb-1">CEPs já cadastrados</p>
-                  {cepSuggestions.map((addr, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onMouseDown={() => applyCepSuggestion(addr)}
-                      className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors border-t border-gray-100 first:border-t-0"
-                    >
-                      <span className="font-mono text-sm font-medium text-blue-700">{addr.zipCode}</span>
-                      <span className="text-xs text-gray-500 ml-2">
-                        {addr.street}{addr.complement ? `, ${addr.complement}` : ''}, {addr.neighborhood} — {addr.city}/{addr.state}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {errors.zipCode && <p className="text-sm text-red-500 mt-1">{errors.zipCode}</p>}
-          </div>
-
-          <div>
-            <label className="label">Estado *</label>
-            <select
-              className={`input ${errors.state ? 'border-red-500' : ''}`}
-              value={formData.address.state}
-              onChange={e => handleAddressChange('state', e.target.value)}
-            >
-              <option value="">UF</option>
-              {BRAZILIAN_STATES.map(state => (
-                <option key={state} value={state}>{state}</option>
-              ))}
-            </select>
-            {errors.state && <p className="text-sm text-red-500 mt-1">{errors.state}</p>}
-          </div>
-
-          <div>
-            <label className="label">Cidade *</label>
-            <input
-              type="text"
-              className={`input ${errors.city ? 'border-red-500' : ''}`}
-              value={formData.address.city}
-              onChange={e => handleAddressChange('city', e.target.value)}
-              placeholder="São Paulo"
-            />
-            {errors.city && <p className="text-sm text-red-500 mt-1">{errors.city}</p>}
-          </div>
-        </div>
-
-        <div>
-          <label className="label">Bairro *</label>
-          <input
-            type="text"
-            className={`input ${errors.neighborhood ? 'border-red-500' : ''}`}
-            value={formData.address.neighborhood}
-            onChange={e => handleAddressChange('neighborhood', e.target.value)}
-            placeholder="Centro"
-          />
-          {errors.neighborhood && <p className="text-sm text-red-500 mt-1">{errors.neighborhood}</p>}
-        </div>
-
-        <div className="grid grid-cols-4 gap-4">
-          <div className="col-span-3">
-            <label className="label">Rua *</label>
-            <input
-              type="text"
-              className={`input ${errors.street ? 'border-red-500' : ''}`}
-              value={formData.address.street}
-              onChange={e => handleAddressChange('street', e.target.value)}
-              placeholder="Av. Paulista"
-            />
-            {errors.street && <p className="text-sm text-red-500 mt-1">{errors.street}</p>}
-          </div>
-
-          <div>
-            <label className="label">Número *</label>
-            <input
-              type="text"
-              className={`input ${errors.number ? 'border-red-500' : ''}`}
-              value={formData.address.number}
-              onChange={e => handleAddressChange('number', e.target.value)}
-              placeholder="1000"
-            />
-            {errors.number && <p className="text-sm text-red-500 mt-1">{errors.number}</p>}
-          </div>
-        </div>
-
-        <div>
-          <label className="label">Complemento</label>
-          <div className="relative">
-            <input
-              type="text"
-              className="input"
-              value={formData.address.complement}
-              onChange={e => { handleAddressChange('complement', e.target.value); setShowComplementSuggestions(true); }}
-              onFocus={() => setShowComplementSuggestions(true)}
-              onBlur={() => {
-                setTimeout(() => setShowComplementSuggestions(false), 150);
-                complementSuggestionSelectedRef.current = false;
-              }}
-              onKeyDown={e => { if (e.key === 'Escape') setShowComplementSuggestions(false); }}
-              placeholder="Sala 101"
-              autoComplete="off"
-            />
-            {showComplementSuggestions && complementSuggestions.length > 0 && (
-              <div className="absolute z-50 top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
-                <p className="text-xs text-gray-400 px-3 pt-2 pb-1">Complementos já cadastrados</p>
-                {complementSuggestions.map((complement, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onMouseDown={() => {
-                      complementSuggestionSelectedRef.current = true;
-                      handleAddressChange('complement', complement);
-                      setShowComplementSuggestions(false);
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors border-t border-gray-100 first:border-t-0 text-sm text-gray-700"
-                  >
-                    {complement}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
         {(formData.addresses ?? []).length > 0 && (
           <div className="space-y-3 pt-2">
             {formData.addresses?.map((entry, index) => (
@@ -676,7 +462,9 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                       checked={entry.isPrimary}
                       onChange={() => setPrimaryAddress(entry.id)}
                     />
-                    <span className="text-sm font-medium text-gray-700">{entry.label || `Endereço ${index + 1}`}</span>
+                    <span className="text-sm font-medium text-gray-700">
+                      {entry.isPrimary ? 'Endereço principal' : (entry.label || `Endereço ${index + 1}`)}
+                    </span>
                   </div>
                   <div className="flex gap-2">
                     {!entry.isPrimary && (
@@ -684,28 +472,36 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                         Definir principal
                       </button>
                     )}
-                    <button type="button" onClick={() => removeAddressEntry(entry.id)} className="text-xs text-red-600 hover:text-red-700">
-                      Remover
-                    </button>
+                    {(formData.addresses?.length ?? 0) > 1 && (
+                      <button type="button" onClick={() => removeAddressEntry(entry.id)} className="text-xs text-red-600 hover:text-red-700">
+                        Remover
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="label">CEP</label>
-                    <input
-                      type="text"
-                      className="input"
-                      value={entry.address.zipCode}
-                      onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, zipCode: formatCEP(e.target.value) } })}
-                      placeholder="00000-000"
-                      maxLength={9}
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        className={`input ${entry.isPrimary && errors.zipCode ? 'border-red-500' : ''}`}
+                        value={entry.address.zipCode}
+                        onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, zipCode: formatCEP(e.target.value) } })}
+                        onBlur={() => fillAddressFromCEP(entry)}
+                        placeholder="00000-000"
+                        maxLength={9}
+                      />
+                      {loadingAddressId === entry.id && (
+                        <Loader2 className="absolute right-3 top-1/2 w-4 h-4 -translate-y-1/2 animate-spin text-gray-400" />
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className="label">Estado</label>
                     <select
-                      className="input"
+                      className={`input ${entry.isPrimary && errors.state ? 'border-red-500' : ''}`}
                       value={entry.address.state}
                       onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, state: e.target.value } })}
                     >
@@ -719,7 +515,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                     <label className="label">Cidade</label>
                     <input
                       type="text"
-                      className="input"
+                      className={`input ${entry.isPrimary && errors.city ? 'border-red-500' : ''}`}
                       value={entry.address.city}
                       onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, city: e.target.value } })}
                       placeholder="São Paulo"
@@ -731,7 +527,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                   <label className="label">Bairro</label>
                   <input
                     type="text"
-                    className="input"
+                    className={`input ${entry.isPrimary && errors.neighborhood ? 'border-red-500' : ''}`}
                     value={entry.address.neighborhood}
                     onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, neighborhood: e.target.value } })}
                     placeholder="Centro"
@@ -743,7 +539,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                     <label className="label">Rua</label>
                     <input
                       type="text"
-                      className="input"
+                      className={`input ${entry.isPrimary && errors.street ? 'border-red-500' : ''}`}
                       value={entry.address.street}
                       onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, street: e.target.value } })}
                       placeholder="Av. Paulista"
@@ -753,7 +549,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                     <label className="label">Número</label>
                     <input
                       type="text"
-                      className="input"
+                      className={`input ${entry.isPrimary && errors.number ? 'border-red-500' : ''}`}
                       value={entry.address.number}
                       onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, number: e.target.value } })}
                       placeholder="1000"
@@ -776,89 +572,111 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
           </div>
         )}
       </div>
-      </div>
 
       {/* Working Hours */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="font-medium text-gray-900">Horários de Atendimento *</h4>
-          <button
-            type="button"
-            onClick={addWorkingHours}
-            disabled={formData.workingHours.length >= 7}
-            className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
-          >
-            <Plus className="w-4 h-4" /> Adicionar
-          </button>
-        </div>
+        <h4 className="font-medium text-gray-900">Horários de Atendimento *</h4>
 
         {errors.workingHours && <p className="text-sm text-red-500">{errors.workingHours}</p>}
 
-        <div className="space-y-3">
-          {formData.workingHours.map((wh, index) => (
-            <div key={index} className="flex flex-wrap items-center gap-2 bg-gray-50 p-3 rounded-lg">
-              <select
-                className="input w-40"
-                value={wh.dayOfWeek}
-                onChange={e => handleWorkingHoursChange(index, 'dayOfWeek', parseInt(e.target.value))}
-              >
-                {DAYS_OF_WEEK.map(day => (
-                  <option key={day.value} value={day.value}>{day.label}</option>
-                ))}
-              </select>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+          {(formData.addresses ?? []).map((addressEntry, addressIndex) => {
+            const primaryAddressId = formData.addresses?.find(entry => entry.isPrimary)?.id;
+            const addressHours = formData.workingHours
+              .map((wh, index) => ({ wh, index }))
+              .filter(({ wh }) => (wh.addressId ?? primaryAddressId) === addressEntry.id);
 
-              <div className="flex items-center gap-1">
-                {(['M', 'T', 'MT', 'AG'] as AttendancePeriod[]).map(period => (
+            return (
+              <section key={addressEntry.id} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                <div className="flex items-start justify-between gap-3 bg-blue-50 border-b border-blue-100 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-blue-900">
+                      {addressEntry.isPrimary ? 'Endereço principal' : (addressEntry.label || `Endereço ${addressIndex + 1}`)}
+                    </p>
+                    <p className="text-xs text-blue-700 mt-0.5 truncate" title={`${addressEntry.address.street}, ${addressEntry.address.number}`}>
+                      {addressEntry.address.street}, {addressEntry.address.number}
+                      {addressEntry.address.complement ? `, ${addressEntry.address.complement}` : ''}
+                      {addressEntry.address.neighborhood ? ` — ${addressEntry.address.neighborhood}` : ''}
+                    </p>
+                  </div>
                   <button
-                    key={period}
                     type="button"
-                    onClick={() => handleWorkingHoursChange(index, 'period', wh.period === period ? undefined : period)}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      wh.period === period
-                        ? period === 'M'
-                          ? 'bg-amber-500 text-white'
-                          : period === 'T'
-                            ? 'bg-orange-500 text-white'
-                            : period === 'MT'
-                              ? 'bg-green-500 text-white'
-                              : 'bg-blue-500 text-white'
-                        : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
-                    }`}
-                    title={PERIOD_TIMES[period].label}
+                    onClick={() => addWorkingHours(addressEntry.id)}
+                    disabled={addressHours.length >= 7}
+                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 shrink-0 disabled:opacity-50"
                   >
-                    {period}
+                    <Plus className="w-3.5 h-3.5" /> Adicionar
                   </button>
-                ))}
-              </div>
-
-              {wh.period === 'AG' && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">Horário:</span>
-                  <input
-                    type="time"
-                    className="input w-28"
-                    value={wh.specificTime || ''}
-                    onChange={e => handleWorkingHoursChange(index, 'specificTime', e.target.value)}
-                    placeholder="HH:mm"
-                  />
                 </div>
-              )}
 
-              {wh.period && wh.period !== 'AG' && (
-                <span className="text-xs text-gray-500">
-                  {PERIOD_TIMES[wh.period].label}
-                </span>
-              )}
+                <div className="space-y-2 p-3">
+                  {addressHours.length === 0 && (
+                    <p className="text-xs text-gray-400 py-3 text-center">Nenhum horário neste endereço</p>
+                  )}
+                  {addressHours.map(({ wh, index }) => (
+                    <div key={index} className="flex flex-wrap items-center gap-2 bg-gray-50 p-2 rounded-lg">
+                      <select
+                        className="input w-36"
+                        value={wh.dayOfWeek}
+                        onChange={e => handleWorkingHoursChange(index, 'dayOfWeek', parseInt(e.target.value))}
+                      >
+                        {DAYS_OF_WEEK.map(day => (
+                          <option key={day.value} value={day.value}>{day.label}</option>
+                        ))}
+                      </select>
 
-              <button
-                type="button"
-                onClick={() => removeWorkingHours(index)}
-                className="p-2 text-red-500 hover:bg-red-50 rounded-lg ml-auto"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+                      <div className="flex items-center gap-1">
+                        {(['M', 'T', 'MT', 'AG'] as AttendancePeriod[]).map(period => (
+                          <button
+                            key={period}
+                            type="button"
+                            onClick={() => handleWorkingHoursChange(index, 'period', wh.period === period ? undefined : period)}
+                            className={`px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+                              wh.period === period
+                                ? period === 'M'
+                                  ? 'bg-amber-500 text-white'
+                                  : period === 'T'
+                                    ? 'bg-orange-500 text-white'
+                                    : period === 'MT'
+                                      ? 'bg-green-500 text-white'
+                                      : 'bg-blue-500 text-white'
+                                : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'
+                            }`}
+                            title={PERIOD_TIMES[period].label}
+                          >
+                            {period}
+                          </button>
+                        ))}
+                      </div>
+
+                      {wh.period === 'AG' && (
+                        <input
+                          type="time"
+                          aria-label="Horário agendado"
+                          className="input w-28"
+                          value={wh.specificTime || ''}
+                          onChange={e => handleWorkingHoursChange(index, 'specificTime', e.target.value)}
+                        />
+                      )}
+
+                      {wh.period && wh.period !== 'AG' && (
+                        <span className="text-[11px] text-gray-500">{PERIOD_TIMES[wh.period].label}</span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => removeWorkingHours(index)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg ml-auto"
+                        aria-label="Remover horário"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       </div>
 

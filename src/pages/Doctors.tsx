@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Search, Plus, Upload, Download, Map, List, Filter, ArrowLeft, Trash2, Edit, MapPin, Phone, Mail, Clock, FileText, Users, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Upload, Download, Map, List, Filter, ArrowLeft, Trash2, Edit, MapPin, Clock, FileText, Users, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import { useDoctors } from '../hooks/useDoctors';
 import { useVisits } from '../hooks/useVisits';
 import { useApp } from '../contexts/AppContext';
@@ -10,9 +10,10 @@ import { DoctorMap } from '../components/maps/DoctorMap';
 import { Modal } from '../components/common/Modal';
 import { PageLoading } from '../components/common/Loading';
 import { EmptyState } from '../components/common/EmptyState';
-import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, PERIOD_TIMES, type Doctor } from '../types';
+import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, PERIOD_TIMES, type Doctor, type Visit } from '../types';
 import { formatFullAddress, formatDate, formatVisitStatus } from '../utils/format';
 import { downloadDoctorTemplate, parseExcelFile, exportDoctorsToExcel } from '../services/excel';
+import { getDoctorPrimaryAddress } from '../utils/doctorAddressUtils';
 
 export function DoctorsPage() {
   const navigate = useNavigate();
@@ -35,18 +36,18 @@ export function DoctorsPage() {
 
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [searchQuery, setSearchQuery] = useState('');
-  const [specialtyFilter, setSpecialtyFilter] = useState('');
-  const [filterDay, setFilterDay] = useState<number>(0); // 0 = all, 1-5 = weekday
-  const [filterCity, setFilterCity] = useState('');
-  const [filterNeighborhood, setFilterNeighborhood] = useState('');
-  const [filterComplement, setFilterComplement] = useState('');
+  const [specialtyFilters, setSpecialtyFilters] = useState<string[]>([]);
+  const [filterDays, setFilterDays] = useState<number[]>([]);
+  const [filterCities, setFilterCities] = useState<string[]>([]);
+  const [filterNeighborhoods, setFilterNeighborhoods] = useState<string[]>([]);
+  const [filterComplements, setFilterComplements] = useState<string[]>([]);
   const [onlyUnvisited, setOnlyUnvisited] = useState(false);
   const [filteredDoctors, setFilteredDoctors] = useState<Doctor[]>(doctors);
   const [showForm, setShowForm] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
-  const [doctorVisits, setDoctorVisits] = useState<any[]>([]);
+  const [doctorVisits, setDoctorVisits] = useState<Visit[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -71,19 +72,25 @@ export function DoctorsPage() {
   }, [id, getDoctor, getVisitsForDoctor]);
 
   const availableCities = useMemo(() =>
-    [...new Set(doctors.map(d => d.address.city).filter(Boolean))].sort(),
+    [...new Set(doctors.map(d => getDoctorPrimaryAddress(d).city).filter(Boolean))].sort(),
     [doctors]
   );
 
   const availableNeighborhoods = useMemo(() =>
-    [...new Set(doctors.map(d => d.address.neighborhood).filter(Boolean))].sort(),
+    [...new Set(doctors.map(d => getDoctorPrimaryAddress(d).neighborhood).filter(Boolean))].sort(),
     [doctors]
   );
 
   const availableComplements = useMemo(() =>
-    [...new Set(doctors.map(d => d.address.complement).filter(Boolean) as string[])].sort(),
+    Array.from(new Set(doctors.flatMap(d => {
+      const address = getDoctorPrimaryAddress(d);
+      return address.complement ? [address.complement] : [];
+    }))).sort(),
     [doctors]
   );
+
+  const toggleValue = <T,>(values: T[], value: T) =>
+    values.includes(value) ? values.filter(v => v !== value) : [...values, value];
 
   // Filter doctors
   useEffect(() => {
@@ -97,26 +104,29 @@ export function DoctorsPage() {
       );
     }
 
-    if (specialtyFilter) {
-      result = result.filter(d => d.specialty === specialtyFilter);
+    if (specialtyFilters.length > 0) {
+      result = result.filter(d => specialtyFilters.includes(d.specialty || ''));
     }
 
-    if (filterDay) {
+    if (filterDays.length > 0) {
       result = result.filter(d =>
-        d.workingHours.some(wh => wh.dayOfWeek === filterDay && wh.period != null)
+        d.workingHours.some(wh => filterDays.includes(wh.dayOfWeek) && wh.period != null)
       );
     }
 
-    if (filterCity) {
-      result = result.filter(d => d.address.city === filterCity);
+    if (filterCities.length > 0) {
+      result = result.filter(d => filterCities.includes(getDoctorPrimaryAddress(d).city));
     }
 
-    if (filterNeighborhood) {
-      result = result.filter(d => d.address.neighborhood === filterNeighborhood);
+    if (filterNeighborhoods.length > 0) {
+      result = result.filter(d => filterNeighborhoods.includes(getDoctorPrimaryAddress(d).neighborhood));
     }
 
-    if (filterComplement) {
-      result = result.filter(d => d.address.complement === filterComplement);
+    if (filterComplements.length > 0) {
+      result = result.filter(d => {
+        const address = getDoctorPrimaryAddress(d);
+        return address.complement ? filterComplements.includes(address.complement) : false;
+      });
     }
 
     if (onlyUnvisited) {
@@ -124,28 +134,45 @@ export function DoctorsPage() {
     }
 
     setFilteredDoctors(result);
-  }, [doctors, searchQuery, specialtyFilter, filterDay, filterCity, filterNeighborhood, filterComplement, onlyUnvisited]);
+  }, [doctors, searchQuery, specialtyFilters, filterDays, filterCities, filterNeighborhoods, filterComplements, onlyUnvisited, cycleDay]);
 
   const handleAddDoctor = async (data: DoctorFormData) => {
+    console.log('handleAddDoctor start', data);
     setIsSubmitting(true);
     try {
       await addDoctor(data);
+      console.log('handleAddDoctor success');
       setShowForm(false);
       if (id === 'new') navigate('/doctors');
+    } catch (err) {
+      console.error('Erro ao salvar médico:', err);
+      throw err;
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleUpdateDoctor = async (data: DoctorFormData) => {
-    if (!selectedDoctor) return;
+    if (!selectedDoctor) {
+      console.warn('handleUpdateDoctor called without selectedDoctor');
+      return;
+    }
 
+    console.log('handleUpdateDoctor start', selectedDoctor.id, data);
     setIsSubmitting(true);
     try {
       await updateDoctor(selectedDoctor.id, data);
-      const updated = await getDoctor(selectedDoctor.id);
-      setSelectedDoctor(updated || null);
+      console.log('handleUpdateDoctor success');
+      setSelectedDoctor({
+        ...selectedDoctor,
+        ...data,
+        updatedAt: new Date(),
+        syncStatus: 'synced'
+      });
       setShowForm(false);
+    } catch (err) {
+      console.error('Erro ao atualizar médico:', err);
+      throw err;
     } finally {
       setIsSubmitting(false);
     }
@@ -210,7 +237,6 @@ export function DoctorsPage() {
   if (selectedDoctor && !showForm) {
     return (
       <div className="min-h-screen bg-gray-50">
-        {/* Header */}
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
           <button
             onClick={() => navigate('/doctors')}
@@ -248,51 +274,36 @@ export function DoctorsPage() {
         </div>
 
         <div className="p-4 space-y-4">
-          {/* Basic Info */}
           <div className="card">
             <h2 className="text-xl font-bold text-gray-900">{selectedDoctor.name}</h2>
             <p className="text-gray-600">
               CRM {selectedDoctor.crm}
               {selectedDoctor.specialty && ` • ${selectedDoctor.specialty}`}
             </p>
-
+            {selectedDoctor.category && (
+              <div className={`mt-2 inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${selectedDoctor.category === 'A' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : selectedDoctor.category === 'C' ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-blue-100 text-blue-700 border-blue-300'}`}>
+                Categoria {selectedDoctor.category}
+              </div>
+            )}
             <div className="mt-4 space-y-3">
               <div className="flex items-start">
                 <MapPin className="w-5 h-5 mr-3 text-gray-400 mt-0.5" />
-                <span className="text-gray-700">{formatFullAddress(selectedDoctor.address)}</span>
+                <span className="text-gray-700">{formatFullAddress(getDoctorPrimaryAddress(selectedDoctor))}</span>
               </div>
-
-              {selectedDoctor.phone && (
-                <div className="flex items-center">
-                  <Phone className="w-5 h-5 mr-3 text-gray-400" />
-                  <a href={`tel:${selectedDoctor.phone}`} className="text-blue-600">
-                    {selectedDoctor.phone}
-                  </a>
-                </div>
-              )}
-
-              {selectedDoctor.email && (
-                <div className="flex items-center">
-                  <Mail className="w-5 h-5 mr-3 text-gray-400" />
-                  <a href={`mailto:${selectedDoctor.email}`} className="text-blue-600">
-                    {selectedDoctor.email}
-                  </a>
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Working Hours */}
           <div className="card">
             <h3 className="font-medium text-gray-900 mb-3 flex items-center">
               <Clock className="w-5 h-5 mr-2 text-gray-400" />
               Horários de Atendimento
             </h3>
             <div className="space-y-2">
-              {selectedDoctor.workingHours
+              {[...selectedDoctor.workingHours]
                 .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
                 .map((wh, i) => {
-                  // Format period display
+                  const attendanceAddress = selectedDoctor.addresses?.find(address => address.id === wh.addressId)
+                    ?? selectedDoctor.addresses?.find(address => address.isPrimary);
                   let periodDisplay = '';
                   if (wh.period) {
                     if (wh.period === 'AG' && wh.specificTime) {
@@ -304,7 +315,7 @@ export function DoctorsPage() {
                     periodDisplay = `${wh.startTime} - ${wh.endTime}`;
                   }
                   return (
-                    <div key={i} className="flex items-center gap-2 text-sm">
+                    <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
                       <span className="text-gray-600 w-28 shrink-0">
                         {DAYS_OF_WEEK.find(d => d.value === wh.dayOfWeek)?.label}
                       </span>
@@ -315,13 +326,19 @@ export function DoctorsPage() {
                       ) : (
                         <span className="text-gray-400 text-xs">—</span>
                       )}
+                      {attendanceAddress && (
+                        <span className="inline-flex items-center gap-1 text-gray-600 bg-gray-100 px-2 py-0.5 rounded text-xs">
+                          <MapPin className="w-3 h-3" />
+                          {attendanceAddress.label || 'Endereço'}: {attendanceAddress.address.street}, {attendanceAddress.address.number}
+                          {attendanceAddress.address.complement ? `, ${attendanceAddress.address.complement}` : ''}
+                        </span>
+                      )}
                     </div>
                   );
                 })}
             </div>
           </div>
 
-          {/* Map */}
           {selectedDoctor.coordinates && (
             <div className="card p-0 overflow-hidden">
               <DoctorMap
@@ -331,7 +348,6 @@ export function DoctorsPage() {
             </div>
           )}
 
-          {/* Notes */}
           {selectedDoctor.notes && (
             <div className="card">
               <h3 className="font-medium text-gray-900 mb-2 flex items-center">
@@ -342,7 +358,6 @@ export function DoctorsPage() {
             </div>
           )}
 
-          {/* Visit History */}
           <div className="card">
             <h3 className="font-medium text-gray-900 mb-3">Histórico de Visitas</h3>
             {doctorVisits.length > 0 ? (
@@ -368,6 +383,35 @@ export function DoctorsPage() {
             )}
           </div>
         </div>
+
+        <Modal
+          isOpen={showDeleteConfirm}
+          onClose={() => setShowDeleteConfirm(false)}
+          title="Excluir médico"
+          size="sm"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              Deseja realmente excluir <strong>{selectedDoctor?.name}</strong>? Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="btn-secondary flex-1"
+                disabled={isDeleting}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteDoctor}
+                className="btn-danger flex-1"
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Excluindo...' : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </Modal>
       </div>
     );
   }
@@ -495,14 +539,14 @@ export function DoctorsPage() {
             <button
               onClick={() => setShowFilterModal(true)}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm ${
-                specialtyFilter || filterDay || filterCity || filterNeighborhood || filterComplement ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || filterComplements.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
               }`}
             >
               <Filter className="w-4 h-4" />
               Filtrar
-              {(specialtyFilter || filterDay || filterCity || filterNeighborhood || filterComplement) && (
+              {(specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || filterComplements.length > 0) && (
                 <span className="ml-1 bg-blue-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                  {[specialtyFilter, filterDay, filterCity, filterNeighborhood, filterComplement].filter(Boolean).length}
+                  {specialtyFilters.length + filterDays.length + filterCities.length + filterNeighborhoods.length + filterComplements.length}
                 </span>
               )}
             </button>
@@ -511,7 +555,7 @@ export function DoctorsPage() {
       </div>
 
       {/* Filter result count */}
-      {(searchQuery || specialtyFilter || filterDay || filterCity || filterNeighborhood || filterComplement || onlyUnvisited) && (
+      {(searchQuery || specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || filterComplements.length > 0 || onlyUnvisited) && (
         <div className="px-4 py-2 border-t border-gray-100 bg-blue-50">
           <span className="text-sm text-blue-700 font-medium">
             {filteredDoctors.length} médico{filteredDoctors.length !== 1 ? 's' : ''} encontrado{filteredDoctors.length !== 1 ? 's' : ''}
@@ -525,10 +569,10 @@ export function DoctorsPage() {
         {filteredDoctors.length === 0 ? (
           <EmptyState
             icon={Users}
-            title={searchQuery || specialtyFilter ? "Nenhum médico encontrado" : "Nenhum médico cadastrado"}
-            description={searchQuery || specialtyFilter ? "Tente ajustar sua busca ou filtros" : "Cadastre seu primeiro médico para começar"}
+            title={searchQuery || specialtyFilters.length > 0 ? "Nenhum médico encontrado" : "Nenhum médico cadastrado"}
+            description={searchQuery || specialtyFilters.length > 0 ? "Tente ajustar sua busca ou filtros" : "Cadastre seu primeiro médico para começar"}
             action={
-              !searchQuery && !specialtyFilter && (
+              !searchQuery && specialtyFilters.length === 0 && (
                 <button onClick={() => setShowForm(true)} className="btn-primary">
                   <Plus className="w-4 h-4 mr-2" />
                   Cadastrar Médico
@@ -566,16 +610,25 @@ export function DoctorsPage() {
           {/* Specialty */}
           <div>
             <label className="label">Especialidade</label>
-            <select
-              className="input"
-              value={specialtyFilter}
-              onChange={e => setSpecialtyFilter(e.target.value)}
-            >
-              <option value="">Todas</option>
-              {MEDICAL_SPECIALTIES.map(spec => (
-                <option key={spec} value={spec}>{spec}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {MEDICAL_SPECIALTIES.map(spec => {
+                const selected = specialtyFilters.includes(spec);
+                return (
+                  <button
+                    key={spec}
+                    type="button"
+                    onClick={() => setSpecialtyFilters(prev => toggleValue(prev, spec))}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                      selected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {spec}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Day of attendance */}
@@ -583,57 +636,78 @@ export function DoctorsPage() {
             <label className="label">Dia de atendimento</label>
             <div className="flex gap-2 flex-wrap">
               {[
-                { value: 0, label: 'Todos' },
                 { value: 1, label: 'Seg' },
                 { value: 2, label: 'Ter' },
                 { value: 3, label: 'Qua' },
                 { value: 4, label: 'Qui' },
                 { value: 5, label: 'Sex' },
-              ].map(({ value, label }) => (
-                <button
-                  key={value}
-                  onClick={() => setFilterDay(value)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                    filterDay === value
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+              ].map(({ value, label }) => {
+                const selected = filterDays.includes(value);
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFilterDays(prev => toggleValue(prev, value))}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                      selected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {/* City */}
           <div>
             <label className="label">Cidade</label>
-            <select
-              className="input"
-              value={filterCity}
-              onChange={e => setFilterCity(e.target.value)}
-            >
-              <option value="">Todas as cidades</option>
-              {availableCities.map(city => (
-                <option key={city} value={city}>{city}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {availableCities.map(city => {
+                const selected = filterCities.includes(city);
+                return (
+                  <button
+                    key={city}
+                    type="button"
+                    onClick={() => setFilterCities(prev => toggleValue(prev, city))}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                      selected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {city}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Neighborhood */}
           {availableNeighborhoods.length > 0 && (
             <div>
               <label className="label">Bairro</label>
-              <select
-                className="input"
-                value={filterNeighborhood}
-                onChange={e => setFilterNeighborhood(e.target.value)}
-              >
-                <option value="">Todos os bairros</option>
-                {availableNeighborhoods.map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
+              <div className="flex flex-wrap gap-2">
+                {availableNeighborhoods.map(n => {
+                  const selected = filterNeighborhoods.includes(n);
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setFilterNeighborhoods(prev => toggleValue(prev, n))}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                        selected
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -641,27 +715,36 @@ export function DoctorsPage() {
           {availableComplements.length > 0 && (
             <div>
               <label className="label">Complemento</label>
-              <select
-                className="input"
-                value={filterComplement}
-                onChange={e => setFilterComplement(e.target.value)}
-              >
-                <option value="">Todos os complementos</option>
-                {availableComplements.map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+              <div className="flex flex-wrap gap-2">
+                {availableComplements.map(c => {
+                  const selected = filterComplements.includes(c);
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setFilterComplements(prev => toggleValue(prev, c))}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                        selected
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
           <div className="flex gap-3">
             <button
               onClick={() => {
-                setSpecialtyFilter('');
-                setFilterDay(0);
-                setFilterCity('');
-                setFilterNeighborhood('');
-                setFilterComplement('');
+                setSpecialtyFilters([]);
+                setFilterDays([]);
+                setFilterCities([]);
+                setFilterNeighborhoods([]);
+                setFilterComplements([]);
                 setShowFilterModal(false);
               }}
               className="btn-secondary flex-1"
