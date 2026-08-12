@@ -1,177 +1,173 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ClipboardList, Users, History, Settings,
-  MapPin, Pill, CalendarOff,
-  CheckCircle2, AlertCircle, BarChart2, CalendarDays
+  ArrowRight, CalendarDays, CheckCircle2, Clock3, MapPin,
+  Plus, Route, Stethoscope, UserPlus, Users
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useDoctors } from '../hooks/useDoctors';
+import { useRoutes } from '../hooks/useRoutes';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
-import { isVisitedThisMonth } from '../components/doctors/DoctorCard';
-import { exportDoctorsToExcel } from '../services/excel';
+import { isVisitedThisMonth } from '../utils/visitCycle';
+import type { ScheduledVisit, VisitStatus } from '../types';
+
+const STATUS_STYLES: Record<VisitStatus, { label: string; className: string }> = {
+  completed: { label: 'Concluída', className: 'bg-emerald-100 text-emerald-700' },
+  in_progress: { label: 'Em andamento', className: 'bg-blue-100 text-blue-700' },
+  pending: { label: 'Próxima', className: 'bg-blue-100 text-blue-700' },
+  not_done: { label: 'Não realizada', className: 'bg-red-100 text-red-700' },
+  rescheduled: { label: 'Reagendada', className: 'bg-amber-100 text-amber-700' }
+};
+
+function getVisitName(visit: ScheduledVisit) {
+  return visit.doctor?.name ?? visit.pharmacy?.name ?? 'Visita sem identificação';
+}
+
+function getVisitLocation(visit: ScheduledVisit) {
+  const address = visit.doctor?.address ?? visit.pharmacy?.address;
+  if (!address) return 'Endereço não informado';
+  return [address.street, address.number, address.neighborhood].filter(Boolean).join(', ');
+}
 
 export function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { doctors } = useDoctors();
+  const { todaySchedule, isLoading: loadingSchedule } = useRoutes();
   const { settings } = useApp();
   const cycleDay = settings?.cycleStartDay ?? 1;
-
   const today = new Date();
-  const visitedCount   = doctors.filter(d => isVisitedThisMonth(d, cycleDay)).length;
-  const unvisitedCount = doctors.length - visitedCount;
 
-  const unroutedCount = useMemo(() => {
-    const now = new Date();
-    return doctors.filter(d => {
-      if (!d.lastRoutedDate) return true;
-      const lr = new Date(d.lastRoutedDate);
-      return lr.getFullYear() !== now.getFullYear() || lr.getMonth() !== now.getMonth();
-    }).length;
-  }, [doctors]);
+  const visitedCount = doctors.filter(doctor => isVisitedThisMonth(doctor, cycleDay)).length;
+  const pendingCount = Math.max(doctors.length - visitedCount, 0);
+  const progress = doctors.length > 0 ? Math.round((visitedCount / doctors.length) * 100) : 0;
+  const firstName = user?.name?.trim().split(' ')[0] || '';
 
-  const firstName = user?.name?.split(' ')[0] || 'Olá';
+  const todayVisits = useMemo(
+    () => [...(todaySchedule?.visits ?? [])].sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime)),
+    [todaySchedule]
+  );
+  const nextVisit = todayVisits.find(visit => visit.status === 'in_progress')
+    ?? todayVisits.find(visit => visit.status === 'pending');
 
-  const tiles = [
-    {
-      label: 'Médicos',
-      description: `${doctors.length} cadastrados`,
-      icon: Users,
-      gradient: 'from-emerald-500 to-emerald-700',
-      badge: unvisitedCount > 0 ? unvisitedCount : undefined,
-      badgeColor: 'bg-amber-400',
-      onClick: () => navigate('/doctors'),
-    },
-    {
-      label: 'Farmácias',
-      description: 'Gerenciar farmácias',
-      icon: Pill,
-      gradient: 'from-teal-500 to-teal-700',
-      onClick: () => navigate('/pharmacies'),
-    },
-    {
-      label: 'Roteiro',
-      description: 'Ver e gerenciar roteiros',
-      icon: ClipboardList,
-      gradient: 'from-blue-500 to-blue-700',
-      badge: unroutedCount > 0 ? unroutedCount : undefined,
-      badgeColor: 'bg-orange-400',
-      onClick: () => navigate('/routes'),
-    },
-    {
-      label: 'Agenda',
-      description: 'Calendário de visitas',
-      icon: CalendarDays,
-      gradient: 'from-cyan-500 to-cyan-700',
-      onClick: () => navigate('/agenda'),
-    },
-    {
-      label: 'Feriados',
-      description: 'Calendário nacional e estadual',
-      icon: CalendarOff,
-      gradient: 'from-amber-500 to-amber-700',
-      onClick: () => navigate('/holidays'),
-    },
-    {
-      label: 'Histórico',
-      description: 'Visitas realizadas',
-      icon: History,
-      gradient: 'from-violet-500 to-violet-700',
-      onClick: () => navigate('/history'),
-    },
-    {
-      label: 'Relatório',
-      description: 'Exportar para Excel',
-      icon: BarChart2,
-      gradient: 'from-indigo-500 to-indigo-700',
-      onClick: () => exportDoctorsToExcel(doctors),
-    },
-    {
-      label: 'Mapa',
-      description: 'Ver médicos no mapa',
-      icon: MapPin,
-      gradient: 'from-rose-500 to-rose-700',
-      onClick: () => navigate('/doctors'),
-    },
-    {
-      label: 'Configurações',
-      description: 'Perfil e preferências',
-      icon: Settings,
-      gradient: 'from-gray-500 to-gray-700',
-      onClick: () => navigate('/settings'),
-    },
+  const quickActions = [
+    { label: 'Novo médico', icon: UserPlus, onClick: () => navigate('/doctors/new') },
+    { label: 'Criar roteiro', icon: Route, onClick: () => navigate('/routes/new') },
+    { label: 'Abrir agenda', icon: CalendarDays, onClick: () => navigate('/agenda') }
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* ── Hero header ── */}
-      <div className="bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 px-5 pt-10 pb-14 text-white">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-11 h-11 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-            <MapPin className="w-6 h-6 text-white" />
-          </div>
+    <div className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold tracking-tight">MedVisit</h1>
-            <p className="text-blue-200 text-sm">
-              {firstName !== 'Olá'
-                ? <>Olá, <span className="font-medium text-white">{firstName}</span> —{' '}</>
-                : 'Olá — '
-              }
-              {format(today, "EEEE, d 'de' MMMM", { locale: ptBR })}
-            </p>
+            <p className="text-sm font-medium text-blue-600">{format(today, "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
+              Bom dia{firstName ? `, ${firstName}` : ''}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">Confira suas visitas e prioridades para hoje.</p>
           </div>
-        </div>
+          <button onClick={() => navigate('/agenda')} className="btn-secondary self-start sm:self-auto">
+            <CalendarDays className="mr-2 h-4 w-4" /> Ver agenda completa
+          </button>
+        </header>
 
-        {/* Monthly progress */}
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-white/10 backdrop-blur-sm rounded-2xl px-3 py-3 text-center">
-            <p className="text-2xl font-bold">{doctors.length}</p>
-            <p className="text-[11px] text-blue-200 mt-0.5">Médicos</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-2xl px-3 py-3 text-center">
-            <div className="flex items-center justify-center gap-1">
-              <CheckCircle2 className="w-4 h-4 text-green-300" />
-              <p className="text-2xl font-bold text-green-300">{visitedCount}</p>
-            </div>
-            <p className="text-[11px] text-blue-200 mt-0.5">Visitados</p>
-          </div>
-          <div className={`backdrop-blur-sm rounded-2xl px-3 py-3 text-center ${unvisitedCount > 0 ? 'bg-amber-400/30' : 'bg-white/10'}`}>
-            <div className="flex items-center justify-center gap-1">
-              {unvisitedCount > 0 && <AlertCircle className="w-4 h-4 text-amber-300" />}
-              <p className={`text-2xl font-bold ${unvisitedCount > 0 ? 'text-amber-300' : ''}`}>{unvisitedCount}</p>
-            </div>
-            <p className="text-[11px] text-blue-200 mt-0.5">Pendentes</p>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Navigation grid ── */}
-      <div className="px-4 -mt-6">
-        <div className="grid grid-cols-2 gap-3">
-          {tiles.map(({ label, description, icon: Icon, gradient, badge, badgeColor, onClick }) => (
-            <button
-              key={label}
-              onClick={onClick}
-              className="relative bg-white rounded-2xl p-4 shadow-sm border border-gray-100 hover:shadow-md active:scale-[0.97] transition-all text-left"
-            >
-              {badge !== undefined && (
-                <span className={`absolute top-3 right-3 min-w-[20px] h-5 px-1.5 ${badgeColor || 'bg-red-500'} text-white text-[10px] font-bold rounded-full flex items-center justify-center`}>
-                  {badge}
-                </span>
-              )}
-              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center shadow-sm mb-3`}>
-                <Icon className="w-6 h-6 text-white" />
+        <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+          <section className="overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50 px-5 py-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Próxima visita</p>
+                <p className="mt-0.5 text-sm text-blue-800">Seu próximo compromisso do dia</p>
               </div>
-              <p className="font-semibold text-gray-900 text-sm leading-tight">{label}</p>
-              <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{description}</p>
-            </button>
-          ))}
+              <div className="rounded-xl bg-blue-600 p-2.5 text-white"><Stethoscope className="h-5 w-5" /></div>
+            </div>
+            <div className="p-5">
+              {loadingSchedule ? (
+                <div className="h-40 animate-pulse rounded-xl bg-slate-100" />
+              ) : nextVisit ? (
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900">{getVisitName(nextVisit)}</h2>
+                      <p className="mt-1 text-sm text-slate-500">{nextVisit.doctor?.specialty ?? (nextVisit.pharmacy ? 'Farmácia' : 'Visita')}</p>
+                    </div>
+                    <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                      {nextVisit.status === 'in_progress' ? 'Em andamento' : 'Próxima'}
+                    </span>
+                  </div>
+                  <div className="grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2">
+                    <div className="flex items-center gap-2 text-sm text-slate-700"><Clock3 className="h-4 w-4 text-blue-500" /> {nextVisit.scheduledTime}</div>
+                    <div className="flex items-start gap-2 text-sm text-slate-700"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" /> {getVisitLocation(nextVisit)}</div>
+                  </div>
+                  <button onClick={() => navigate('/agenda')} className="btn-primary w-full sm:w-auto">
+                    Abrir visita <ArrowRight className="ml-2 h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex min-h-40 flex-col items-center justify-center text-center">
+                  <CheckCircle2 className="h-10 w-10 text-emerald-500" />
+                  <h2 className="mt-3 font-semibold text-slate-800">Nenhuma visita pendente hoje</h2>
+                  <p className="mt-1 text-sm text-slate-500">Você pode consultar a agenda ou preparar o próximo roteiro.</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold text-slate-900">Progresso do ciclo</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Ciclo iniciado no dia {cycleDay}</p>
+              </div>
+              <span className="text-2xl font-bold text-blue-600">{progress}%</span>
+            </div>
+            <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-700 transition-all" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="mt-5 grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-slate-50 p-3 text-center"><Users className="mx-auto h-4 w-4 text-slate-500" /><p className="mt-1 text-xl font-bold text-slate-900">{doctors.length}</p><p className="text-[11px] text-slate-500">Médicos</p></div>
+              <div className="rounded-xl bg-emerald-50 p-3 text-center"><CheckCircle2 className="mx-auto h-4 w-4 text-emerald-600" /><p className="mt-1 text-xl font-bold text-emerald-700">{visitedCount}</p><p className="text-[11px] text-emerald-700">Visitados</p></div>
+              <div className="rounded-xl bg-amber-50 p-3 text-center"><Clock3 className="mx-auto h-4 w-4 text-amber-600" /><p className="mt-1 text-xl font-bold text-amber-700">{pendingCount}</p><p className="text-[11px] text-amber-700">Pendentes</p></div>
+            </div>
+          </section>
         </div>
 
-        <p className="text-center text-[11px] text-gray-300 mt-6 mb-4">MedVisit v1.0.0</p>
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <div><h2 className="font-semibold text-slate-900">Agenda de hoje</h2><p className="text-xs text-slate-500">{todayVisits.length} compromisso{todayVisits.length === 1 ? '' : 's'} programado{todayVisits.length === 1 ? '' : 's'}</p></div>
+            <button onClick={() => navigate('/agenda')} className="text-sm font-medium text-blue-600 hover:text-blue-700">Ver completa</button>
+          </div>
+          {todayVisits.length > 0 ? (
+            <div className="divide-y divide-slate-100">
+              {todayVisits.slice(0, 6).map(visit => {
+                const status = STATUS_STYLES[visit.status];
+                return (
+                  <button key={visit.id} onClick={() => navigate('/agenda')} className="flex w-full items-center gap-3 py-3 text-left hover:bg-slate-50 sm:px-2">
+                    <span className="w-12 shrink-0 text-sm font-semibold text-blue-600">{visit.scheduledTime}</span>
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${visit.status === 'completed' ? 'bg-emerald-500' : visit.status === 'pending' ? 'bg-blue-500' : 'bg-amber-500'}`} />
+                    <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-900">{getVisitName(visit)}</p><p className="truncate text-xs text-slate-500">{getVisitLocation(visit)}</p></div>
+                    <span className={`hidden rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline ${status.className}`}>{status.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : <p className="rounded-xl bg-slate-50 py-8 text-center text-sm text-slate-500">Nenhuma visita programada para hoje.</p>}
+        </section>
+
+        <section>
+          <h2 className="mb-3 font-semibold text-slate-900">Ações rápidas</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {quickActions.map(({ label, icon: Icon, onClick }) => (
+              <button key={label} onClick={onClick} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-200 hover:shadow-md">
+                <span className="rounded-xl bg-blue-50 p-3 text-blue-600"><Icon className="h-5 w-5" /></span>
+                <span className="font-medium text-slate-800">{label}</span>
+                <Plus className="ml-auto h-4 w-4 text-slate-400" />
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );
