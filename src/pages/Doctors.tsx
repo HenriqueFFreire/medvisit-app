@@ -235,6 +235,11 @@ export function DoctorsPage() {
 
   // Doctor Detail View
   if (selectedDoctor && !showForm) {
+    const detailAddresses = selectedDoctor.addresses?.length
+      ? selectedDoctor.addresses
+      : [{ id: 'primary', label: 'Principal', address: selectedDoctor.address, isPrimary: true }];
+    const primaryAddressId = detailAddresses.find(address => address.isPrimary)?.id ?? detailAddresses[0].id;
+
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
@@ -298,44 +303,72 @@ export function DoctorsPage() {
               <Clock className="w-5 h-5 mr-2 text-gray-400" />
               Horários de Atendimento
             </h3>
-            <div className="space-y-2">
-              {[...selectedDoctor.workingHours]
-                .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
-                .map((wh, i) => {
-                  const attendanceAddress = selectedDoctor.addresses?.find(address => address.id === wh.addressId)
-                    ?? selectedDoctor.addresses?.find(address => address.isPrimary);
-                  let periodDisplay = '';
-                  if (wh.period) {
-                    if (wh.period === 'AG' && wh.specificTime) {
-                      periodDisplay = `Agendado: ${wh.specificTime}`;
-                    } else {
-                      periodDisplay = PERIOD_TIMES[wh.period].label;
-                    }
-                  } else if (wh.startTime && wh.endTime) {
-                    periodDisplay = `${wh.startTime} - ${wh.endTime}`;
-                  }
-                  return (
-                    <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="text-gray-600 w-28 shrink-0">
-                        {DAYS_OF_WEEK.find(d => d.value === wh.dayOfWeek)?.label}
-                      </span>
-                      {periodDisplay ? (
-                        <span className="text-blue-700 font-medium bg-blue-50 px-2 py-0.5 rounded text-xs">
-                          {periodDisplay}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
-                      {attendanceAddress && (
-                        <span className="inline-flex items-center gap-1 text-gray-600 bg-gray-100 px-2 py-0.5 rounded text-xs">
-                          <MapPin className="w-3 h-3" />
-                          {attendanceAddress.label || 'Endereço'}: {attendanceAddress.address.street}, {attendanceAddress.address.number}
-                          {attendanceAddress.address.complement ? `, ${attendanceAddress.address.complement}` : ''}
-                        </span>
-                      )}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+              {detailAddresses.map((addressEntry, addressIndex) => {
+                const addressHours = [...selectedDoctor.workingHours]
+                  .filter(wh => (wh.addressId ?? primaryAddressId) === addressEntry.id)
+                  .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+
+                return (
+                  <section key={addressEntry.id} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                    <div className="bg-blue-50 border-b border-blue-100 px-4 py-3">
+                      <p className="text-sm font-semibold text-blue-900">
+                        {addressEntry.isPrimary ? 'Endereço principal' : (addressEntry.label || `Endereço ${addressIndex + 1}`)}
+                      </p>
+                      <p className="text-xs text-blue-700 mt-0.5">
+                        {addressEntry.address.street}, {addressEntry.address.number}
+                        {addressEntry.address.complement ? `, ${addressEntry.address.complement}` : ''}
+                        {addressEntry.address.neighborhood ? ` — ${addressEntry.address.neighborhood}` : ''}
+                      </p>
                     </div>
-                  );
-                })}
+
+                    <div className="space-y-2 p-3">
+                      {addressHours.length === 0 && (
+                        <p className="text-xs text-gray-400 py-4 text-center">Nenhum horário neste endereço</p>
+                      )}
+                      {addressHours.map((wh, index) => {
+                        const legacyPeriod = !wh.period && wh.startTime && wh.endTime
+                          ? `${wh.startTime} - ${wh.endTime}`
+                          : null;
+                        return (
+                          <div key={`${wh.dayOfWeek}-${index}`} className="flex flex-wrap items-center gap-2 bg-gray-50 p-2 rounded-lg">
+                            <span className="input w-36 bg-white text-sm">
+                              {DAYS_OF_WEEK.find(day => day.value === wh.dayOfWeek)?.label}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {(['M', 'T', 'MT', 'AG'] as const).map(period => (
+                                <span
+                                  key={period}
+                                  className={`px-2.5 py-2 rounded-lg text-sm font-medium ${
+                                    wh.period === period
+                                      ? period === 'M'
+                                        ? 'bg-amber-500 text-white'
+                                        : period === 'T'
+                                          ? 'bg-orange-500 text-white'
+                                          : period === 'MT'
+                                            ? 'bg-green-500 text-white'
+                                            : 'bg-blue-500 text-white'
+                                      : 'bg-white border border-gray-300 text-gray-700'
+                                  }`}
+                                >
+                                  {period}
+                                </span>
+                              ))}
+                            </div>
+                            {wh.period === 'AG' && wh.specificTime && (
+                              <span className="text-[11px] text-gray-500">Agendado: {wh.specificTime}</span>
+                            )}
+                            {wh.period && wh.period !== 'AG' && (
+                              <span className="text-[11px] text-gray-500">{PERIOD_TIMES[wh.period].label}</span>
+                            )}
+                            {legacyPeriod && <span className="text-[11px] text-gray-500">{legacyPeriod}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </div>
 
