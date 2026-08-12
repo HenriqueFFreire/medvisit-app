@@ -6,7 +6,8 @@ import {
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { geocodeAddress } from '../services/geocoding';
-import type { Doctor, Address, WorkingHours, AttendancePeriod } from '../types';
+import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory } from '../types';
+import { normalizeDoctorAddresses } from '../utils/doctorAddressUtils';
 
 interface UseDoctorsResult {
   doctors: Doctor[];
@@ -26,12 +27,30 @@ interface CreateDoctorInput {
   name: string;
   crm: string;
   specialty?: string;
+  category?: DoctorCategory;
   phone?: string;
   email?: string;
   address: Address;
+  addresses?: DoctorAddressEntry[];
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
+}
+
+// Firestore rejects `undefined`, including inside nested objects. Keep optional
+// address fields absent when they have no value instead of serializing them as
+// `undefined`.
+function createPersistableAddress(address: Address): Address {
+  return {
+    street: address.street ?? '',
+    number: address.number ?? '',
+    neighborhood: address.neighborhood ?? '',
+    city: address.city ?? '',
+    state: address.state ?? '',
+    zipCode: address.zipCode ?? '',
+    ...(address.complement != null && address.complement !== '' ? { complement: address.complement } : {}),
+    ...(address.fullAddress != null && address.fullAddress !== '' ? { fullAddress: address.fullAddress } : {})
+  };
 }
 
 function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
@@ -40,9 +59,11 @@ function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
     name: data.name as string,
     crm: data.crm as string,
     specialty: data.specialty as string | undefined,
+    category: (data.category as DoctorCategory | undefined) ?? 'B',
     phone: data.phone as string | undefined,
     email: data.email as string | undefined,
     address: data.address as Address,
+    addresses: (data.addresses as DoctorAddressEntry[] | undefined) ?? [],
     coordinates: data.coordinates as Doctor['coordinates'],
     workingHours: (data.workingHours as WorkingHours[]) ?? [],
     notes: data.notes as string | undefined,
@@ -61,12 +82,24 @@ export function useDoctors(): UseDoctorsResult {
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
+  const withTimeout = async <T>(promise: Promise<T>, ms = 15000): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('Operação demorou demais. Tente novamente.')), ms);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]) as T;
+    } finally {
+      clearTimeout(timeoutId!);
+    }
+  };
+
   const loadDoctors = useCallback(async () => {
     if (!user) return;
     try {
       setIsLoading(true);
       const q = query(collection(db, 'users', user.id, 'doctors'), orderBy('name'));
-      const snap = await getDocs(q);
+      const snap = await withTimeout(getDocs(q));
       setDoctors(snap.docs.map(d => mapDocToDoctor(d.id, d.data() as Record<string, unknown>)));
       setError(null);
     } catch (err) {
@@ -107,22 +140,22 @@ export function useDoctors(): UseDoctorsResult {
     }
 
     const now = new Date().toISOString();
+    const primaryAddress = createPersistableAddress(data.address);
+    const serializedAddresses = normalizeDoctorAddresses(primaryAddress, data.addresses ?? []).map(entry => ({
+      id: entry.id,
+      label: entry.label ?? 'Endereço',
+      isPrimary: entry.isPrimary,
+      address: createPersistableAddress(entry.address)
+    }));
     const docData = {
       name: data.name,
       crm: data.crm,
       specialty: data.specialty ?? null,
+      category: data.category ?? 'B',
       phone: data.phone ?? null,
       email: data.email ?? null,
-      address: {
-        street: data.address.street,
-        number: data.address.number,
-        complement: data.address.complement ?? null,
-        neighborhood: data.address.neighborhood,
-        city: data.address.city,
-        state: data.address.state,
-        zipCode: data.address.zipCode,
-        fullAddress: data.address.fullAddress ?? null
-      },
+      address: primaryAddress,
+      addresses: serializedAddresses,
       coordinates: coordinates ?? null,
       workingHours: data.workingHours.map(wh => ({
         dayOfWeek: wh.dayOfWeek,
@@ -136,16 +169,22 @@ export function useDoctors(): UseDoctorsResult {
       updatedAt: now
     };
 
-    const ref = await addDoc(collection(db, 'users', user.id, 'doctors'), docData);
+    const ref = await withTimeout(addDoc(collection(db, 'users', user.id, 'doctors'), docData));
     const newDoctor = mapDocToDoctor(ref.id, docData as Record<string, unknown>);
     setDoctors(prev => [...prev, newDoctor].sort((a, b) => a.name.localeCompare(b.name)));
     return newDoctor;
   };
 
   const updateDoctor = async (id: string, data: Partial<Doctor>): Promise<void> => {
+    console.log('updateDoctor start', id, data);
     if (!user) throw new Error('Usuário não autenticado');
-    const existing = doctors.find(d => d.id === id);
-    if (!existing) throw new Error('Médico não encontrado');
+    let existing = doctors.find(d => d.id === id);
+    if (!existing) {
+      console.log('updateDoctor fetching existing doctor from Firestore');
+      const snap = await withTimeout(getDoc(doc(db, 'users', user.id, 'doctors', id)));
+      if (!snap.exists()) throw new Error('Médico não encontrado');
+      existing = mapDocToDoctor(snap.id, snap.data() as Record<string, unknown>);
+    }
 
     if (data.name !== undefined || data.crm !== undefined) {
       const dup = checkDuplicate({ name: data.name ?? existing.name, crm: data.crm ?? existing.crm }, id);
@@ -161,6 +200,24 @@ export function useDoctors(): UseDoctorsResult {
       }
     }
 
+    const primaryAddress = createPersistableAddress({
+      street: data.address?.street ?? existing.address.street,
+      number: data.address?.number ?? existing.address.number,
+      complement: data.address?.complement ?? existing.address.complement,
+      neighborhood: data.address?.neighborhood ?? existing.address.neighborhood,
+      city: data.address?.city ?? existing.address.city,
+      state: data.address?.state ?? existing.address.state,
+      zipCode: data.address?.zipCode ?? existing.address.zipCode,
+      fullAddress: data.address?.fullAddress ?? existing.address.fullAddress
+    });
+
+    const serializedAddresses = normalizeDoctorAddresses(primaryAddress, data.addresses ?? existing.addresses ?? []).map(entry => ({
+      id: entry.id,
+      label: entry.label ?? 'Endereço',
+      isPrimary: entry.isPrimary,
+      address: createPersistableAddress(entry.address)
+    }));
+
     const updates: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
       coordinates: coordinates ?? null
@@ -169,6 +226,7 @@ export function useDoctors(): UseDoctorsResult {
     if (data.name !== undefined) updates.name = data.name;
     if (data.crm !== undefined) updates.crm = data.crm;
     if (data.specialty !== undefined) updates.specialty = data.specialty;
+    if (data.category !== undefined) updates.category = data.category;
     if (data.phone !== undefined) updates.phone = data.phone;
     if (data.email !== undefined) updates.email = data.email;
     if (data.notes !== undefined) updates.notes = data.notes;
@@ -180,18 +238,12 @@ export function useDoctors(): UseDoctorsResult {
       startTime: wh.startTime ?? null,
       endTime: wh.endTime ?? null,
     }));
-    if (data.address !== undefined) updates.address = {
-      street: data.address.street,
-      number: data.address.number,
-      complement: data.address.complement ?? null,
-      neighborhood: data.address.neighborhood,
-      city: data.address.city,
-      state: data.address.state,
-      zipCode: data.address.zipCode,
-      fullAddress: data.address.fullAddress ?? null
-    };
+    if (data.address !== undefined || data.addresses !== undefined) {
+      updates.address = primaryAddress;
+      updates.addresses = serializedAddresses;
+    }
 
-    await updateDoc(doc(db, 'users', user.id, 'doctors', id), updates);
+    await withTimeout(updateDoc(doc(db, 'users', user.id, 'doctors', id), updates));
 
     const updatedDoctor: Doctor = {
       ...existing,
@@ -208,7 +260,7 @@ export function useDoctors(): UseDoctorsResult {
 
   const deleteDoctor = async (id: string): Promise<void> => {
     if (!user) throw new Error('Usuário não autenticado');
-    await deleteDoc(doc(db, 'users', user.id, 'doctors', id));
+    await withTimeout(deleteDoc(doc(db, 'users', user.id, 'doctors', id)));
     setDoctors(prev => prev.filter(d => d.id !== id));
   };
 
@@ -216,7 +268,7 @@ export function useDoctors(): UseDoctorsResult {
     const local = doctors.find(d => d.id === id);
     if (local) return local;
     if (!user) return undefined;
-    const snap = await getDoc(doc(db, 'users', user.id, 'doctors', id));
+    const snap = await withTimeout(getDoc(doc(db, 'users', user.id, 'doctors', id)));
     return snap.exists() ? mapDocToDoctor(snap.id, snap.data() as Record<string, unknown>) : undefined;
   };
 

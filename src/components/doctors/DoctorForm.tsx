@@ -1,10 +1,11 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { Plus, Minus, Loader2 } from 'lucide-react';
-import type { Doctor, Address, WorkingHours, AttendancePeriod } from '../../types';
+import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory } from '../../types';
 import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, BRAZILIAN_STATES, PERIOD_TIMES } from '../../types';
 import { validateEmail, validatePhone, validateCEP, formatCEP } from '../../utils/validation';
 import { getAddressFromCEP } from '../../services/geocoding';
 import { ButtonLoading } from '../common/Loading';
+import { createDoctorAddressEntry, buildDoctorAddressState } from '../../utils/doctorAddressUtils';
 
 interface DoctorFormProps {
   doctor?: Doctor;
@@ -18,9 +19,11 @@ export interface DoctorFormData {
   name: string;
   crm: string;
   specialty?: string;
+  category?: DoctorCategory;
   phone?: string;
   email?: string;
   address: Address;
+  addresses?: DoctorAddressEntry[];
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
@@ -35,13 +38,8 @@ const DEFAULT_WORKING_HOURS: WorkingHours[] = [
 ];
 
 export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading }: DoctorFormProps) {
-  const [formData, setFormData] = useState<DoctorFormData>({
-    name: doctor?.name || '',
-    crm: doctor?.crm || '',
-    specialty: doctor?.specialty || '',
-    phone: doctor?.phone || '',
-    email: doctor?.email || '',
-    address: doctor?.address || {
+  const initialAddressState = useMemo(() => {
+    const primaryAddress = doctor?.address || {
       street: '',
       number: '',
       complement: '',
@@ -49,13 +47,32 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       city: '',
       state: '',
       zipCode: ''
-    },
+    };
+    return buildDoctorAddressState(primaryAddress, doctor?.addresses);
+  }, [doctor]);
+
+  const defaultFormData = useMemo<DoctorFormData>(() => ({
+    name: doctor?.name || '',
+    crm: doctor?.crm || '',
+    specialty: doctor?.specialty || '',
+    category: doctor?.category || 'B',
+    phone: doctor?.phone || '',
+    email: doctor?.email || '',
+    address: initialAddressState.primaryAddress,
+    addresses: initialAddressState.addresses,
     workingHours: doctor?.workingHours || DEFAULT_WORKING_HOURS,
     notes: doctor?.notes || '',
     hasPanel: doctor?.hasPanel ?? true
-  });
+  }), [doctor, initialAddressState]);
+
+  const [formData, setFormData] = useState<DoctorFormData>(defaultFormData);
+
+  useEffect(() => {
+    setFormData(defaultFormData);
+  }, [defaultFormData]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
   const [crmWarning, setCrmWarning] = useState<string | null>(null);
   const [isLoadingCEP, setIsLoadingCEP] = useState(false);
@@ -116,10 +133,85 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
   };
 
   const handleAddressChange = (field: keyof Address, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      address: { ...prev.address, [field]: value }
-    }));
+    setFormData(prev => {
+      const address = { ...prev.address, [field]: value };
+
+      // `addresses` also contains the primary address. Keep both representations
+      // in sync so validation and persistence don't see a stale/empty address.
+      const addresses = (prev.addresses ?? []).map(entry =>
+        entry.isPrimary
+          ? { ...entry, address: { ...entry.address, [field]: value } }
+          : entry
+      );
+
+      return { ...prev, address, addresses };
+    });
+
+    if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
+    if (errors.addresses) setErrors(prev => ({ ...prev, addresses: '' }));
+  };
+
+  const addAddress = () => {
+    setFormData(prev => {
+      const currentAddresses = prev.addresses ?? [];
+      const newEntry = createDoctorAddressEntry({
+        street: '',
+        number: '',
+        complement: '',
+        neighborhood: '',
+        city: '',
+        state: '',
+        zipCode: ''
+      }, { label: `Endereço ${currentAddresses.length + 1}`, isPrimary: currentAddresses.length === 0 });
+
+      return {
+        ...prev,
+        addresses: [...currentAddresses, newEntry],
+        address: currentAddresses.length === 0 ? { ...newEntry.address } : prev.address
+      };
+    });
+  };
+
+  const updateAddressEntry = (id: string, patch: Partial<DoctorAddressEntry>) => {
+    setFormData(prev => {
+      const nextAddresses = (prev.addresses ?? []).map(entry => entry.id === id ? { ...entry, ...patch } : entry);
+      const primaryAddress = nextAddresses.find(entry => entry.isPrimary)?.address ?? prev.address;
+      return {
+        ...prev,
+        addresses: nextAddresses,
+        address: primaryAddress
+      };
+    });
+  };
+
+  const removeAddressEntry = (id: string) => {
+    setFormData(prev => {
+      const nextAddresses = (prev.addresses ?? []).filter(entry => entry.id !== id);
+      const fallback = nextAddresses[0];
+      return {
+        ...prev,
+        addresses: nextAddresses.length > 0 ? nextAddresses.map((entry, index) => ({
+          ...entry,
+          isPrimary: index === 0 || entry.isPrimary
+        })) : [],
+        address: fallback ? { ...fallback.address } : prev.address
+      };
+    });
+  };
+
+  const setPrimaryAddress = (id: string) => {
+    setFormData(prev => {
+      const nextAddresses = (prev.addresses ?? []).map(entry => ({
+        ...entry,
+        isPrimary: entry.id === id
+      }));
+      const primary = nextAddresses.find(entry => entry.isPrimary)?.address ?? prev.address;
+      return {
+        ...prev,
+        addresses: nextAddresses,
+        address: { ...primary }
+      };
+    });
   };
 
   const applyCepSuggestion = (addr: Address) => {
@@ -201,12 +293,13 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
+    const hasText = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
-    if (!formData.name.trim()) {
+    if (!hasText(formData.name)) {
       newErrors.name = 'Nome é obrigatório';
     }
 
-    if (!formData.crm.trim()) {
+    if (!hasText(formData.crm)) {
       newErrors.crm = 'CRM é obrigatório';
     }
 
@@ -218,19 +311,19 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       newErrors.phone = 'Telefone inválido';
     }
 
-    if (!formData.address.street.trim()) {
+    if (!hasText(formData.address.street)) {
       newErrors.street = 'Rua é obrigatória';
     }
 
-    if (!formData.address.number.trim()) {
+    if (!hasText(formData.address.number)) {
       newErrors.number = 'Número é obrigatório';
     }
 
-    if (!formData.address.neighborhood.trim()) {
+    if (!hasText(formData.address.neighborhood)) {
       newErrors.neighborhood = 'Bairro é obrigatório';
     }
 
-    if (!formData.address.city.trim()) {
+    if (!hasText(formData.address.city)) {
       newErrors.city = 'Cidade é obrigatória';
     }
 
@@ -238,8 +331,18 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       newErrors.state = 'Estado é obrigatório';
     }
 
-    if (!formData.address.zipCode.trim() || !validateCEP(formData.address.zipCode)) {
+    if (!hasText(formData.address.zipCode) || !validateCEP(formData.address.zipCode)) {
       newErrors.zipCode = 'CEP inválido';
+    }
+
+    if ((formData.addresses ?? []).length > 0) {
+      const invalidEntries = (formData.addresses ?? []).filter(entry => {
+        const address = entry?.address;
+        return !address || !hasText(address.street) || !hasText(address.city) || !hasText(address.state);
+      });
+      if (invalidEntries.length > 0) {
+        newErrors.addresses = 'Preencha os campos obrigatórios dos endereços adicionais';
+      }
     }
 
     if (formData.workingHours.length === 0) {
@@ -247,23 +350,39 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     }
 
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const isValid = Object.keys(newErrors).length === 0;
+    setSubmitError(isValid ? null : 'Revise os campos destacados antes de salvar.');
+
+    if (!isValid) {
+      requestAnimationFrame(() => {
+        document.querySelector('.border-red-500, [data-form-error="true"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+
+    return isValid;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setDuplicateError(null);
-    if (!validate()) return;
+    try {
+      if (!validate()) return;
+    } catch (err) {
+      console.error('Erro ao validar formulário de médico:', err);
+      setSubmitError('Não foi possível validar os dados deste cadastro. Revise os endereços e tente novamente.');
+      return;
+    }
 
     try {
       await onSubmit(formData);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
+      const msg = err instanceof Error ? err.message : String(err);
       if (msg.startsWith('DUPLICATE:')) {
         const [, name, crm] = msg.split(':');
         setDuplicateError(`Já existe um médico cadastrado com este CRM: ${name} (${crm})`);
       } else {
-        throw err;
+        console.error('Erro no submit do formulário de médico:', err);
+        alert(`Erro ao salvar médico: ${msg}`);
       }
     }
   };
@@ -348,6 +467,20 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
           </div>
         </div>
 
+        <div>
+          <label className="label">Categoria</label>
+          <select
+            className="input"
+            value={formData.category || 'B'}
+            onChange={e => handleInputChange('category', e.target.value)}
+          >
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+          </select>
+          <p className="text-xs text-gray-500 mt-1">A categoria ajuda a priorizar a ordem de visita no roteiro.</p>
+        </div>
+
         {/* Painel */}
         <label className="flex items-center gap-3 cursor-pointer select-none">
           <div
@@ -364,9 +497,22 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
       {/* Address */}
       <div className="space-y-4">
-        <h4 className="font-medium text-gray-900">Endereço</h4>
+        <div className="flex items-center justify-between">
+          <h4 className="font-medium text-gray-900">Endereços</h4>
+          <button type="button" onClick={addAddress} className="text-sm text-blue-600 hover:text-blue-700">
+            + Adicionar endereço
+          </button>
+        </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        {errors.addresses && <p className="text-sm text-red-500">{errors.addresses}</p>}
+
+        <div className="space-y-4 rounded-xl border border-gray-200 p-4 bg-gray-50">
+          <div className="flex items-center justify-between">
+            <h5 className="text-sm font-semibold text-gray-700">Endereço principal</h5>
+            <span className="text-xs text-gray-500">Usado como referência principal</span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="label">CEP *</label>
             <div className="relative" ref={cepSuggestionRef}>
@@ -517,6 +663,119 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
             )}
           </div>
         </div>
+
+        {(formData.addresses ?? []).length > 0 && (
+          <div className="space-y-3 pt-2">
+            {formData.addresses?.map((entry, index) => (
+              <div key={entry.id} className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="primary-address"
+                      checked={entry.isPrimary}
+                      onChange={() => setPrimaryAddress(entry.id)}
+                    />
+                    <span className="text-sm font-medium text-gray-700">{entry.label || `Endereço ${index + 1}`}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {!entry.isPrimary && (
+                      <button type="button" onClick={() => setPrimaryAddress(entry.id)} className="text-xs text-blue-600 hover:text-blue-700">
+                        Definir principal
+                      </button>
+                    )}
+                    <button type="button" onClick={() => removeAddressEntry(entry.id)} className="text-xs text-red-600 hover:text-red-700">
+                      Remover
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="label">CEP</label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={entry.address.zipCode}
+                      onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, zipCode: formatCEP(e.target.value) } })}
+                      placeholder="00000-000"
+                      maxLength={9}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Estado</label>
+                    <select
+                      className="input"
+                      value={entry.address.state}
+                      onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, state: e.target.value } })}
+                    >
+                      <option value="">UF</option>
+                      {BRAZILIAN_STATES.map(state => (
+                        <option key={state} value={state}>{state}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Cidade</label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={entry.address.city}
+                      onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, city: e.target.value } })}
+                      placeholder="São Paulo"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label">Bairro</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={entry.address.neighborhood}
+                    onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, neighborhood: e.target.value } })}
+                    placeholder="Centro"
+                  />
+                </div>
+
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="col-span-3">
+                    <label className="label">Rua</label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={entry.address.street}
+                      onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, street: e.target.value } })}
+                      placeholder="Av. Paulista"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Número</label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={entry.address.number}
+                      onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, number: e.target.value } })}
+                      placeholder="1000"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label">Complemento</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={entry.address.complement ?? ''}
+                    onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, complement: e.target.value } })}
+                    placeholder="Sala 101"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       </div>
 
       {/* Working Hours */}
@@ -621,6 +880,12 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
           <p className="text-sm text-red-700">{duplicateError}</p>
+        </div>
+      )}
+
+      {submitError && (
+        <div data-form-error="true" role="alert" className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+          {submitError}
         </div>
       )}
 
