@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Minus, Loader2, Search, CheckCircle2 } from 'lucide-react';
+import { Plus, Minus, Loader2, Search } from 'lucide-react';
 import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory, DirectoryDoctor } from '../../types';
 import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, BRAZILIAN_STATES, PERIOD_TIMES } from '../../types';
 import { validateEmail, validatePhone, validateCEP, formatCEP } from '../../utils/validation';
@@ -29,7 +29,6 @@ export interface DoctorFormData {
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
-  shareInDirectory?: boolean;
 }
 
 const DEFAULT_WORKING_HOURS: WorkingHours[] = [
@@ -89,8 +88,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       addressId: wh.addressId ?? initialAddressState.addresses.find(entry => entry.isPrimary)?.id
     })),
     notes: doctor?.notes || '',
-    hasPanel: doctor?.hasPanel ?? true,
-    shareInDirectory: doctor?.shareInDirectory ?? false
+    hasPanel: doctor?.hasPanel ?? true
   }), [doctor, initialAddressState]);
 
   const [formData, setFormData] = useState<DoctorFormData>(defaultFormData);
@@ -612,22 +610,6 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
           </span>
         </label>
 
-        <label className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-0.5 rounded border-gray-300 text-blue-600"
-            checked={formData.shareInDirectory ?? false}
-            onChange={event => setFormData(prev => ({ ...prev, shareInDirectory: event.target.checked }))}
-          />
-          <span>
-            <span className="flex items-center gap-1.5 text-sm font-medium text-blue-900">
-              <CheckCircle2 className="w-4 h-4" /> Compartilhar no Diretório MedVisit
-            </span>
-            <span className="block mt-1 text-xs text-blue-700">
-              Publica somente nome, CRM, especialidade, cidade e UF. Seus contatos, endereço completo, aniversário, horários e anotações continuam privados.
-            </span>
-          </span>
-        </label>
       </div>
 
       {/* Address */}

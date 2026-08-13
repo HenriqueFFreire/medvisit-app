@@ -38,7 +38,6 @@ interface CreateDoctorInput {
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
-  shareInDirectory?: boolean;
 }
 
 // Firestore rejects `undefined`, including inside nested objects. Keep optional
@@ -192,14 +191,14 @@ export function useDoctors(): UseDoctorsResult {
       })),
       notes: data.notes ?? null,
       hasPanel: data.hasPanel ?? null,
-      shareInDirectory: data.shareInDirectory ?? false,
+      shareInDirectory: true,
       lastVisitDate: null,
       createdAt: now,
       updatedAt: now
     };
 
     const ref = await withTimeout(addDoc(collection(db, 'users', user.id, 'doctors'), docData));
-    if (data.shareInDirectory) {
+    try {
       await publishDirectoryDoctor({
         userId: user.id,
         sourceDoctorId: ref.id,
@@ -209,6 +208,8 @@ export function useDoctors(): UseDoctorsResult {
         city: primaryAddress.city,
         state: primaryAddress.state
       });
+    } catch (directoryError) {
+      console.error('Médico salvo, mas não foi possível atualizar o Diretório MedVisit:', directoryError);
     }
     const newDoctor = mapDocToDoctor(ref.id, docData as Record<string, unknown>);
     setDoctors(prev => [...prev, newDoctor].sort((a, b) => a.name.localeCompare(b.name)));
@@ -271,7 +272,7 @@ export function useDoctors(): UseDoctorsResult {
     if (data.birthDate !== undefined) updates.birthDate = data.birthDate || null;
     if (data.notes !== undefined) updates.notes = data.notes;
     if (data.hasPanel !== undefined) updates.hasPanel = data.hasPanel;
-    if (data.shareInDirectory !== undefined) updates.shareInDirectory = data.shareInDirectory;
+    updates.shareInDirectory = true;
     if (data.workingHours !== undefined) updates.workingHours = data.workingHours.map(wh => ({
       dayOfWeek: wh.dayOfWeek,
       addressId: wh.addressId ?? null,
@@ -287,8 +288,7 @@ export function useDoctors(): UseDoctorsResult {
 
     await withTimeout(updateDoc(doc(db, 'users', user.id, 'doctors', id), updates));
 
-    const shouldShare = data.shareInDirectory ?? existing.shareInDirectory ?? false;
-    if (shouldShare) {
+    try {
       await publishDirectoryDoctor({
         userId: user.id,
         sourceDoctorId: id,
@@ -301,8 +301,8 @@ export function useDoctors(): UseDoctorsResult {
       if (data.crm && data.crm !== existing.crm) {
         await unpublishDirectoryDoctor(user.id, existing.crm);
       }
-    } else if (existing.shareInDirectory) {
-      await unpublishDirectoryDoctor(user.id, existing.crm);
+    } catch (directoryError) {
+      console.error('Médico atualizado, mas não foi possível atualizar o Diretório MedVisit:', directoryError);
     }
 
     const updatedDoctor: Doctor = {
@@ -339,8 +339,12 @@ export function useDoctors(): UseDoctorsResult {
 
     const doctorToDelete = doctors.find(doctor => doctor.id === id);
     await withTimeout(deleteDoc(doc(db, 'users', user.id, 'doctors', id)));
-    if (doctorToDelete?.shareInDirectory) {
-      await unpublishDirectoryDoctor(user.id, doctorToDelete.crm);
+    if (doctorToDelete) {
+      try {
+        await unpublishDirectoryDoctor(user.id, doctorToDelete.crm);
+      } catch (directoryError) {
+        console.error('Médico excluído, mas não foi possível removê-lo do Diretório MedVisit:', directoryError);
+      }
     }
     setDoctors(prev => prev.filter(d => d.id !== id));
   };
