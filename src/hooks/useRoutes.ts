@@ -37,7 +37,7 @@ interface UseRoutesResult {
   getRouteForDate: (date: Date) => Promise<Route | null>;
   getDailySchedule: (routeId: string, date: Date) => Promise<DailySchedule | null>;
   updateScheduledVisit: (visitId: string, updates: Partial<ScheduledVisit>) => Promise<void>;
-  moveVisitToDay: (visitId: string, targetDateStr: string) => Promise<void>;
+  moveVisitToDay: (visitId: string, targetDateStr: string, targetShift?: 'morning' | 'afternoon') => Promise<void>;
   refreshRoutes: () => Promise<void>;
   findNextAvailableDay: (doctorId: string, afterDate: Date) => Promise<DailySchedule | null>;
   rescheduleVisit: (visitId: string, targetScheduleId: string) => Promise<void>;
@@ -62,7 +62,7 @@ interface CreateRouteInput {
   excludedMornings?: string[];   // dates where morning shift (M) is excluded
   excludedAfternoons?: string[]; // dates where afternoon shift (T) is excluded
   // Preview-confirmed assignment: overrides distribution logic when provided
-  perDateAssignment?: { dateStr: string; panelDoctorIds: string[]; suggestionDoctorIds: string[] }[];
+  perDateAssignment?: { dateStr: string; panelDoctorIds: string[]; suggestionDoctorIds: string[]; morningDoctorIds?: string[]; afternoonDoctorIds?: string[] }[];
   pharmacyIds?: string[];      // pharmacies to include in this route
   pharmaciesPerDay?: number;   // max pharmacies per day; 0 = unlimited (distribute evenly)
 }
@@ -282,11 +282,11 @@ export function useRoutes(): UseRoutesResult {
     const wEnd = settings?.workEndTime || '19:00';
     const minInterval = settings?.minimumInterval || 15;
 
-    const addDay = (date: Date, dayOfWeek: number, dayPanelDoctors: Doctor[], daySuggestionDoctors: Doctor[], dayPharmacies: Pharmacy[] = []) => {
+    const addDay = (date: Date, dayOfWeek: number, dayPanelDoctors: Doctor[], daySuggestionDoctors: Doctor[], dayPharmacies: Pharmacy[] = [], morningDoctorIds: string[] = [], afternoonDoctorIds: string[] = []) => {
       // Panel doctors fill visitsPerDay slots
-      const panelVisits = generateScheduleFromDoctors(dayPanelDoctors, date, data.visitDuration, wStart, wEnd, minInterval);
+      const panelVisits = generateScheduleFromDoctors(dayPanelDoctors, date, data.visitDuration, wStart, wEnd, minInterval, morningDoctorIds, afternoonDoctorIds);
       // Suggestion doctors get scheduled after (ignoring visitsPerDay limit)
-      const suggestionVisits = generateScheduleFromDoctors(daySuggestionDoctors, date, data.visitDuration, wStart, wEnd, minInterval);
+      const suggestionVisits = generateScheduleFromDoctors(daySuggestionDoctors, date, data.visitDuration, wStart, wEnd, minInterval, morningDoctorIds, afternoonDoctorIds);
       const stats = calculateRouteStats(panelVisits);
       totalDistance += stats.totalDistance;
       totalTime += stats.totalTime;
@@ -367,7 +367,7 @@ export function useRoutes(): UseRoutesResult {
         const daySuggestions = allDoctors.filter(d => day.suggestionDoctorIds.includes(d.id));
         const dayPharmacies = pharmacyMap.get(day.dateStr) ?? [];
         if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
-          addDay(date, dow, dayPanel, daySuggestions, dayPharmacies);
+          addDay(date, dow, dayPanel, daySuggestions, dayPharmacies, day.morningDoctorIds ?? [], day.afternoonDoctorIds ?? []);
       }
     } else if (data.routeType === 'day') {
       routeStart = data.startDate;
@@ -933,7 +933,7 @@ export function useRoutes(): UseRoutesResult {
   }, [user]);
 
   // Move a visit to a different daily schedule (different date in same route)
-  const moveVisitToDay = useCallback(async (visitId: string, targetDateStr: string): Promise<void> => {
+  const moveVisitToDay = useCallback(async (visitId: string, targetDateStr: string, targetShift?: 'morning' | 'afternoon'): Promise<void> => {
     if (!user) return;
 
     // Load the visit
@@ -969,8 +969,8 @@ export function useRoutes(): UseRoutesResult {
         routeId,
         date: targetDateStr,
         dayOfWeek: dow,
-        visitCount: 0,
-        suggestionCount: 0,
+        visitCount: visitData.isSuggestion ? 0 : 1,
+        suggestionCount: visitData.isSuggestion ? 1 : 0,
         status: 'pending',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -978,17 +978,41 @@ export function useRoutes(): UseRoutesResult {
     }
 
     // Move the visit
-    batch.update(doc(db, 'users', user.id, 'scheduled_visits', visitId), {
-      dailyScheduleId: targetScheduleId,
-    });
+    const visitUpdate: Record<string, unknown> = { dailyScheduleId: targetScheduleId };
+    if (targetShift) {
+      const currentTime = String(visitData.scheduledTime ?? '08:00');
+      const isAlreadyInTargetShift = targetShift === 'morning'
+        ? currentTime < '12:00'
+        : currentTime >= '12:00';
+      if (!isAlreadyInTargetShift) {
+        visitUpdate.scheduledTime = targetShift === 'morning' ? '08:00' : '13:00';
+        const [startHour, startMinute] = currentTime.split(':').map(Number);
+        const [endHour, endMinute] = String(visitData.estimatedEndTime ?? currentTime).split(':').map(Number);
+        const duration = Math.max(0, endHour * 60 + endMinute - (startHour * 60 + startMinute));
+        const targetStart = targetShift === 'morning' ? 8 * 60 : 13 * 60;
+        const targetEnd = targetStart + duration;
+        visitUpdate.estimatedEndTime = `${String(Math.floor(targetEnd / 60)).padStart(2, '0')}:${String(targetEnd % 60).padStart(2, '0')}`;
+      }
+    }
+    batch.update(doc(db, 'users', user.id, 'scheduled_visits', visitId), visitUpdate);
 
     // Decrement old schedule visitCount
     const isSuggestion = visitData.isSuggestion as boolean | undefined;
     const oldData = curSchedSnap.data();
-    if (isSuggestion) {
-      batch.update(curSchedSnap.ref, { suggestionCount: Math.max(0, ((oldData.suggestionCount as number) || 1) - 1) });
-    } else {
-      batch.update(curSchedSnap.ref, { visitCount: Math.max(0, ((oldData.visitCount as number) || 1) - 1) });
+    if (targetScheduleId !== currentScheduleId) {
+      if (isSuggestion) {
+        batch.update(curSchedSnap.ref, { suggestionCount: Math.max(0, ((oldData.suggestionCount as number) || 1) - 1) });
+      } else {
+        batch.update(curSchedSnap.ref, { visitCount: Math.max(0, ((oldData.visitCount as number) || 1) - 1) });
+      }
+      if (!targetSnap.empty) {
+        const targetCountField = isSuggestion ? 'suggestionCount' : 'visitCount';
+        const targetCount = Number(targetSnap.docs[0].data()[targetCountField] ?? 0);
+        batch.update(doc(db, 'users', user.id, 'daily_schedules', targetScheduleId), {
+          [targetCountField]: targetCount + 1,
+          updatedAt: new Date().toISOString(),
+        });
+      }
     }
 
     await batch.commit();

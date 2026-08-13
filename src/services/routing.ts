@@ -1,4 +1,4 @@
-import type { Coordinates, Doctor, Pharmacy, ScheduledVisit, WorkingHours } from '../types';
+import type { Coordinates, Doctor, Pharmacy, ScheduledVisit, WorkingHours, DoctorCategory } from '../types';
 import { PERIOD_TIMES } from '../types';
 
 const OSRM_BASE_URL = 'https://router.project-osrm.org';
@@ -154,6 +154,21 @@ export function getDoctorRegion(doctor: Doctor): string {
   return `${doctor.address.neighborhood}-${doctor.address.city}`.toLowerCase();
 }
 
+export function doctorAtAttendanceAddress(doctor: Doctor, dayOfWeek: number): Doctor {
+  const schedule = doctor.workingHours.find(wh => wh.dayOfWeek === dayOfWeek && wh.period != null);
+  if (!schedule?.addressId) return doctor;
+
+  const attendanceAddress = doctor.addresses?.find(entry => entry.id === schedule.addressId);
+  if (!attendanceAddress) return doctor;
+
+  return {
+    ...doctor,
+    address: attendanceAddress.address,
+    coordinates: attendanceAddress.coordinates
+      ?? (attendanceAddress.isPrimary ? doctor.coordinates : undefined)
+  };
+}
+
 // Group doctors by region
 export function groupDoctorsByRegion(doctors: Doctor[]): Map<string, Doctor[]> {
   const regions = new Map<string, Doctor[]>();
@@ -176,10 +191,50 @@ export function getDoctorsAvailableOnDay(doctors: Doctor[], dayOfWeek: number): 
   );
 }
 
+function getDoctorCategoryRank(category?: DoctorCategory): number {
+  switch (category) {
+    case 'A': return 0;
+    case 'C': return 2;
+    default: return 1;
+  }
+}
+
+function getDoctorPeriodRank(doctor: Doctor, dayOfWeek: number): number {
+  const schedule = doctor.workingHours.find(wh => wh.dayOfWeek === dayOfWeek && wh.period != null);
+  if (!schedule) return 0;
+  return schedule.period === 'T' ? 1 : 0;
+}
+
+function compareDoctorsForScheduling(a: Doctor, b: Doctor, dayOfWeek: number): number {
+  const aPeriodRank = getDoctorPeriodRank(a, dayOfWeek);
+  const bPeriodRank = getDoctorPeriodRank(b, dayOfWeek);
+  if (aPeriodRank !== bPeriodRank) return aPeriodRank - bPeriodRank;
+
+  const aCategoryRank = getDoctorCategoryRank(a.category);
+  const bCategoryRank = getDoctorCategoryRank(b.category);
+  if (aCategoryRank !== bCategoryRank) return aCategoryRank - bCategoryRank;
+
+  return a.name.localeCompare(b.name);
+}
+
+function sortDoctorsForScheduling(doctors: Doctor[], dayOfWeek: number): Doctor[] {
+  return [...doctors].sort((a, b) => compareDoctorsForScheduling(a, b, dayOfWeek));
+}
+
+function getDoctorSchedulingScore(doctor: Doctor, dayOfWeek: number, currentPoint?: Coordinates): number {
+  const categoryPenalty = getDoctorCategoryRank(doctor.category) * 2;
+  const periodPenalty = getDoctorPeriodRank(doctor, dayOfWeek) * 1;
+  const distancePenalty = currentPoint && doctor.coordinates
+    ? haversineDistance(currentPoint, doctor.coordinates)
+    : 0;
+  return distancePenalty + categoryPenalty + periodPenalty;
+}
+
 // Nearest Neighbor algorithm for route optimization within a region
 export function optimizeRouteNearestNeighbor(
   doctors: Doctor[],
-  startingPoint?: Coordinates
+  startingPoint?: Coordinates,
+  dayOfWeek?: number
 ): Doctor[] {
   if (doctors.length <= 1) {
     return doctors;
@@ -193,26 +248,34 @@ export function optimizeRouteNearestNeighbor(
   const visited = new Set<string>();
   const result: Doctor[] = [];
 
-  // Start from the first doctor or from a starting point
-  let currentPoint: Coordinates = startingPoint || validDoctors[0].coordinates!;
+  const prioritizedDoctors = dayOfWeek !== undefined
+    ? sortDoctorsForScheduling(validDoctors, dayOfWeek)
+    : [...validDoctors];
+
+  // Start from the most relevant doctor or from a starting point
+  let currentPoint: Coordinates = startingPoint || prioritizedDoctors[0].coordinates!;
 
   if (!startingPoint) {
-    result.push(validDoctors[0]);
-    visited.add(validDoctors[0].id);
+    const seedDoctor = prioritizedDoctors[0];
+    result.push(seedDoctor);
+    visited.add(seedDoctor.id);
   }
 
   while (result.length < validDoctors.length) {
     let nearestDoctor: Doctor | null = null;
-    let nearestDistance = Infinity;
+    let bestScore = Infinity;
 
-    for (const doctor of validDoctors) {
+    for (const doctor of prioritizedDoctors) {
       if (visited.has(doctor.id) || !doctor.coordinates) {
         continue;
       }
 
-      const distance = haversineDistance(currentPoint, doctor.coordinates);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
+      const score = dayOfWeek !== undefined
+        ? getDoctorSchedulingScore(doctor, dayOfWeek, currentPoint)
+        : haversineDistance(currentPoint, doctor.coordinates);
+
+      if (score < bestScore) {
+        bestScore = score;
         nearestDoctor = doctor;
       }
     }
@@ -283,10 +346,8 @@ export function generateWeeklyDistribution(
 
     for (let day = 1; day <= 5; day++) {
       const availableDoctors = regionDoctors.filter(
-        d => !assignedDoctors.has(d.id) && (
-          d.workingHours.length === 0 ||
+        d => !assignedDoctors.has(d.id) &&
           d.workingHours.some(wh => wh.dayOfWeek === day && wh.period != null)
-        )
       );
 
       const currentLoad = distribution[day].length;
@@ -325,25 +386,26 @@ export function generateWeeklyDistribution(
     let bestDay: number | null = null;
     let minLoad = Infinity;
 
+    // First: try to assign to a day with configured availability
     for (let day = 1; day <= 5; day++) {
-      const isAvailable =
-        doctor.workingHours.length === 0 ||
-        doctor.workingHours.some(wh => wh.dayOfWeek === day && wh.period != null);
+      const isAvailable = doctor.workingHours.some(wh => wh.dayOfWeek === day && wh.period != null);
       const currentLoad = distribution[day].length;
-
-      // No capacity check — always assign to least loaded available day
       if (isAvailable && currentLoad < minLoad) {
         minLoad = currentLoad;
         bestDay = day;
       }
     }
 
-    // If no day with declared availability, assign to the globally least loaded day
+    // Last resort: doctor has no working hours configured at all — place on least loaded day
     if (bestDay === null) {
-      for (let day = 1; day <= 5; day++) {
-        if (distribution[day].length < minLoad) {
-          minLoad = distribution[day].length;
-          bestDay = day;
+      const hasAnyPeriod = doctor.workingHours.some(wh => wh.period != null);
+      if (!hasAnyPeriod) {
+        minLoad = Infinity;
+        for (let day = 1; day <= 5; day++) {
+          if (distribution[day].length < minLoad) {
+            minLoad = distribution[day].length;
+            bestDay = day;
+          }
         }
       }
     }
@@ -354,19 +416,24 @@ export function generateWeeklyDistribution(
     }
   }
 
-  // Sort by period (morning first, then afternoon) and optimize route within each period group
+  // Sort by period (morning first, then afternoon) and category, then optimize route within each period group
   for (let day = 1; day <= 5; day++) {
+    const dayDoctors = sortDoctorsForScheduling(distribution[day], day);
     const morning = optimizeRouteNearestNeighbor(
-      distribution[day].filter(d => {
+      dayDoctors.filter(d => {
         const wh = d.workingHours.find(w => w.dayOfWeek === day && w.period != null);
         return !wh || wh.period === 'M' || wh.period === 'MT' || wh.period === 'AG';
-      })
+      }),
+      undefined,
+      day
     );
     const afternoon = optimizeRouteNearestNeighbor(
-      distribution[day].filter(d => {
+      dayDoctors.filter(d => {
         const wh = d.workingHours.find(w => w.dayOfWeek === day && w.period != null);
         return wh?.period === 'T';
-      })
+      }),
+      undefined,
+      day
     );
     distribution[day] = [...morning, ...afternoon];
   }
@@ -387,13 +454,19 @@ export function generateDaySchedule(
   const dayOfWeek = date.getDay();
 
   // Filter doctors available on this day
-  const availableDoctors = doctors.filter(doctor =>
-    doctor.workingHours.length === 0 ||
-    doctor.workingHours.some(wh => wh.dayOfWeek === dayOfWeek && wh.period != null)
-  );
+  const availableDoctors = doctors
+    .filter(doctor =>
+      doctor.workingHours.length === 0 ||
+      doctor.workingHours.some(wh => wh.dayOfWeek === dayOfWeek && wh.period != null)
+    )
+    .map(doctor => doctorAtAttendanceAddress(doctor, dayOfWeek));
 
-  // Optimize route order
-  const orderedDoctors = optimizeRouteNearestNeighbor(availableDoctors.slice(0, visitsPerDay));
+  // Optimize route order while respecting day/period and category priority
+  const orderedDoctors = optimizeRouteNearestNeighbor(
+    sortDoctorsForScheduling(availableDoctors.slice(0, visitsPerDay), dayOfWeek),
+    undefined,
+    dayOfWeek
+  );
 
   // Calculate schedule
   const visits: ScheduledVisit[] = [];
@@ -465,7 +538,9 @@ export function generateScheduleFromDoctors(
   visitDuration: number,
   workStartTime: string,
   workEndTime: string,
-  minimumInterval: number
+  minimumInterval: number,
+  forcedMorningDoctorIds: string[] = [],
+  forcedAfternoonDoctorIds: string[] = []
 ): ScheduledVisit[] {
   const dayOfWeek = date.getDay();
 
@@ -475,19 +550,27 @@ export function generateScheduleFromDoctors(
   const endTime = parseTime(workEndTime);
 
   // Only keep doctors that work on this day (or have no working hours configured)
-  const filteredDoctors = doctors.filter(d =>
-    d.workingHours.length === 0 || d.workingHours.some(wh => wh.dayOfWeek === dayOfWeek && wh.period != null)
-  );
+  const filteredDoctors = doctors
+    .filter(d =>
+      d.workingHours.length === 0 || d.workingHours.some(wh => wh.dayOfWeek === dayOfWeek && wh.period != null)
+    )
+    .map(doctor => doctorAtAttendanceAddress(doctor, dayOfWeek));
 
   // Sort: morning first, then full-day/scheduled, then afternoon
-  const morningDoctors = filteredDoctors.filter(d => {
+  const forcedAfternoon = new Set(forcedAfternoonDoctorIds);
+  const forcedMorning = new Set(forcedMorningDoctorIds);
+  const morningDoctors = sortDoctorsForScheduling(filteredDoctors.filter(d => {
+    if (forcedMorning.has(d.id)) return true;
+    if (forcedAfternoon.has(d.id)) return false;
     const wh = d.workingHours.find(w => w.dayOfWeek === dayOfWeek && w.period != null);
     return !wh || wh.period === 'M' || wh.period === 'MT' || wh.period === 'AG';
-  });
-  const afternoonDoctors = filteredDoctors.filter(d => {
+  }), dayOfWeek);
+  const afternoonDoctors = sortDoctorsForScheduling(filteredDoctors.filter(d => {
+    if (forcedMorning.has(d.id)) return false;
+    if (forcedAfternoon.has(d.id)) return true;
     const wh = d.workingHours.find(w => w.dayOfWeek === dayOfWeek && w.period != null);
     return wh?.period === 'T';
-  });
+  }), dayOfWeek);
   const availableDoctors = [...morningDoctors, ...afternoonDoctors];
 
   let lastScheduledIndex = -1;
@@ -496,7 +579,9 @@ export function generateScheduleFromDoctors(
     const doctorSchedule = doctor.workingHours.find(wh => wh.dayOfWeek === dayOfWeek);
 
     // Adjust currentTime forward if doctor's period starts later (e.g. afternoon doctors)
-    if (doctorSchedule) {
+    if (forcedAfternoon.has(doctor.id) && currentTime < parseTime('13:00')) {
+      currentTime = parseTime('13:00');
+    } else if (doctorSchedule && !forcedMorning.has(doctor.id)) {
       const doctorTimes = getWorkingHourTimes(doctorSchedule);
       const doctorStartTime = parseTime(doctorTimes.startTime);
       if (currentTime < doctorStartTime) {

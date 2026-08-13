@@ -13,13 +13,23 @@ import { useRoutes } from '../hooks/useRoutes';
 import { useAgenda } from '../hooks/useAgenda';
 import { useDoctors } from '../hooks/useDoctors';
 import { useApp } from '../contexts/AppContext';
-import { getCycleRange } from '../components/doctors/DoctorCard';
+import { getCycleRange } from '../utils/visitCycle';
 import { PageLoading } from '../components/common/Loading';
 import type { DailySchedule, ScheduledVisit, VisitStatus } from '../types';
 
 type AgendaView = 'month' | 'week' | 'day';
 
 const toDateStr = (d: Date) => format(d, 'yyyy-MM-dd');
+
+const getVisitShift = (visit: ScheduledVisit, dayOfWeek: number): 'morning' | 'afternoon' => {
+  const workingHour = visit.doctor?.workingHours.find(wh => wh.dayOfWeek === dayOfWeek && wh.period != null);
+  if (workingHour?.period === 'T') return 'afternoon';
+  if (workingHour?.period === 'AG' && workingHour.specificTime) {
+    return workingHour.specificTime >= '12:00' ? 'afternoon' : 'morning';
+  }
+  if (workingHour) return 'morning';
+  return visit.scheduledTime >= '12:00' ? 'afternoon' : 'morning';
+};
 
 export function AgendaPage() {
   const navigate = useNavigate();
@@ -94,12 +104,16 @@ export function AgendaPage() {
   const handleUpdateVisit = useCallback(async (visitId: string, status: VisitStatus, doctorId?: string) => {
     await updateScheduledVisit(visitId, { status });
     if (status === 'completed' && doctorId) {
-      try { await markVisited(doctorId); } catch {}
+      try {
+        await markVisited(doctorId);
+      } catch (error) {
+        console.error('A visita foi atualizada, mas o médico não foi marcado como visitado:', error);
+      }
     }
   }, [updateScheduledVisit, markVisited]);
 
-  const handleMoveVisit = useCallback(async (visitId: string, targetDateStr: string) => {
-    await moveVisitToDay(visitId, targetDateStr);
+  const handleMoveVisit = useCallback(async (visitId: string, targetDateStr: string, targetShift: 'morning' | 'afternoon') => {
+    await moveVisitToDay(visitId, targetDateStr, targetShift);
     await loadWeekSchedules(currentDate);
   }, [moveVisitToDay, loadWeekSchedules, currentDate]);
 
@@ -286,16 +300,19 @@ function DraggableVisitChip({ visit, effectiveStatus, onToggle }: {
 }
 
 // ── Droppable day column ──
-function DroppableDayCol({ dateStr, children, today }: { dateStr: string; children: React.ReactNode; today: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `day-${dateStr}` });
+function DroppableDayCol({ children, today }: { children: React.ReactNode; today: boolean }) {
   return (
-    <div ref={setNodeRef}
-      className={`flex-1 rounded-2xl border overflow-hidden shadow-sm transition-colors ${
-        today ? 'border-blue-400 ring-1 ring-blue-300' : isOver ? 'border-blue-300 ring-1 ring-blue-200 bg-blue-50/30' : 'border-gray-200'
+    <div className={`flex-1 rounded-2xl border overflow-hidden shadow-sm transition-colors ${
+        today ? 'border-blue-400 ring-1 ring-blue-300' : 'border-gray-200'
       }`}>
       {children}
     </div>
   );
+}
+
+function DroppableShift({ dateStr, shift, children }: { dateStr: string; shift: 'morning' | 'afternoon'; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `shift|${dateStr}|${shift}` });
+  return <div ref={setNodeRef} className={`min-h-[42px] rounded transition-colors ${isOver ? 'bg-blue-100 ring-1 ring-blue-300' : ''}`}>{children}</div>;
 }
 
 // ── Week View ──
@@ -303,7 +320,7 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdat
   currentDate: Date;
   weekSchedules: DailySchedule[];
   onDayClick: (date: Date) => void;
-  onMoveVisit: (visitId: string, targetDateStr: string) => Promise<void>;
+  onMoveVisit: (visitId: string, targetDateStr: string, targetShift: 'morning' | 'afternoon') => Promise<void>;
   onUpdateVisit?: (visitId: string, status: VisitStatus, doctorId?: string) => Promise<void>;
   hasRouteForWeek: boolean;
   onGoToRoutes: () => void;
@@ -351,16 +368,18 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdat
     setActiveVisit(null);
     if (!e.over) return;
     const visitId = (e.active.id as string).replace('visit-', '');
-    const targetDateStr = (e.over.id as string).replace('day-', '');
+    const [targetKind, targetDateStr, targetShift] = String(e.over.id).split('|');
+    if (targetKind !== 'shift' || (targetShift !== 'morning' && targetShift !== 'afternoon')) return;
     // Check it's actually changing day
     const visit = allVisitsMap.get(visitId);
     if (!visit) return;
     const currentSched = weekSchedules.find(s => s.visits.some(v => v.id === visitId));
     const currentDateStr = currentSched ? format(currentSched.date, 'yyyy-MM-dd') : '';
-    if (targetDateStr === currentDateStr) return;
+    const currentShift = visit.scheduledTime < '12:00' ? 'morning' : 'afternoon';
+    if (targetDateStr === currentDateStr && targetShift === currentShift) return;
     setMovingId(visitId);
     try {
-      await onMoveVisit(visitId, targetDateStr);
+      await onMoveVisit(visitId, targetDateStr, targetShift);
     } finally {
       setMovingId(null);
     }
@@ -398,11 +417,11 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdat
             const today = isToday(day);
             const panelVisits  = (sched?.visits ?? []).filter(v => !v.isSuggestion);
             const suggVisits   = (sched?.visits ?? []).filter(v => v.isSuggestion);
-            const morning   = panelVisits.filter(v => parseInt(v.scheduledTime.split(':')[0]) < 12);
-            const afternoon = panelVisits.filter(v => parseInt(v.scheduledTime.split(':')[0]) >= 12);
+            const morning   = panelVisits.filter(v => getVisitShift(v, day.getDay()) === 'morning');
+            const afternoon = panelVisits.filter(v => getVisitShift(v, day.getDay()) === 'afternoon');
 
             return (
-              <DroppableDayCol key={dateStr} dateStr={dateStr} today={today}>
+              <DroppableDayCol key={dateStr} today={today}>
                 {/* Day header */}
                 <button onClick={() => onDayClick(day)}
                   className={`w-full px-2 py-2 text-center transition-colors ${today ? 'bg-blue-600 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-700'}`}>
@@ -417,7 +436,7 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdat
 
                 {/* Visits */}
                 <div className="p-1.5 bg-white min-h-[80px]">
-                  {morning.length > 0 && (
+                  <DroppableShift dateStr={dateStr} shift="morning">
                     <div className="mb-1.5">
                       <div className="flex items-center gap-0.5 mb-0.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
@@ -428,9 +447,10 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdat
                           ? <div key={v.id} className="text-[10px] text-gray-300 pl-2 py-0.5 animate-pulse">movendo...</div>
                           : <DraggableVisitChip key={v.id} visit={v} effectiveStatus={visitStatuses[v.id] ?? v.status} onToggle={onUpdateVisit ? () => handleWeekToggle(v.id, visitStatuses[v.id] ?? v.status, v.doctorId) : undefined} />
                       ))}
+                      {morning.length === 0 && <p className="text-[9px] text-gray-300 text-center py-1">Solte aqui</p>}
                     </div>
-                  )}
-                  {afternoon.length > 0 && (
+                  </DroppableShift>
+                  <DroppableShift dateStr={dateStr} shift="afternoon">
                     <div className="mb-1.5">
                       <div className="flex items-center gap-0.5 mb-0.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
@@ -441,8 +461,9 @@ function WeekView({ currentDate, weekSchedules, onDayClick, onMoveVisit, onUpdat
                           ? <div key={v.id} className="text-[10px] text-gray-300 pl-2 py-0.5 animate-pulse">movendo...</div>
                           : <DraggableVisitChip key={v.id} visit={v} effectiveStatus={visitStatuses[v.id] ?? v.status} onToggle={onUpdateVisit ? () => handleWeekToggle(v.id, visitStatuses[v.id] ?? v.status, v.doctorId) : undefined} />
                       ))}
+                      {afternoon.length === 0 && <p className="text-[9px] text-gray-300 text-center py-1">Solte aqui</p>}
                     </div>
-                  )}
+                  </DroppableShift>
                   {suggVisits.length > 0 && (
                     <div className="pt-1 border-t border-orange-100">
                       <div className="flex items-center gap-0.5 mb-0.5">

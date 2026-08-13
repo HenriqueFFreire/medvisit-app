@@ -18,7 +18,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { formatWeekRange } from '../utils/format';
 import { generateWeeklyDistribution, type WeeklyRouteDistribution } from '../services/routing';
 import type { RouteType, Doctor } from '../types';
-import { isVisitedThisMonth } from '../components/doctors/DoctorCard';
+import { isVisitedThisMonth } from '../utils/visitCycle';
 
 interface PreviewDay {
   dateStr: string;
@@ -26,6 +26,18 @@ interface PreviewDay {
   dayOfWeek: number;
   panelDoctors: Doctor[];
   suggestionDoctors: Doctor[];
+}
+
+type PreviewShift = 'morning' | 'afternoon';
+
+function getDoctorPreviewShift(doctor: Doctor, dayOfWeek: number): PreviewShift {
+  const workingHour = doctor.workingHours.find(wh => wh.dayOfWeek === dayOfWeek && wh.period != null);
+  if (workingHour?.period === 'T') return 'afternoon';
+  if (workingHour?.period === 'AG' && workingHour.specificTime) {
+    return workingHour.specificTime >= '12:00' ? 'afternoon' : 'morning';
+  }
+  // Morning, full-day and doctors without a configured period start in the morning.
+  return 'morning';
 }
 
 
@@ -45,6 +57,7 @@ export function RoutesPage() {
   const [visitsPerDay, setVisitsPerDay] = useState(settings?.defaultVisitsPerDay || 11);
   const [visitDuration, setVisitDuration] = useState(settings?.defaultVisitDuration || 10);
   const [selectedDoctors, setSelectedDoctors] = useState<string[]>([]);
+  const [includePharmacies, setIncludePharmacies] = useState(false);
   const [selectedPharmacies, setSelectedPharmacies] = useState<string[]>([]);
   const [pharmaciesPerDay, setPharmaciesPerDay] = useState(3);
   const [routeName, setRouteName] = useState('');
@@ -54,7 +67,9 @@ export function RoutesPage() {
   // Preview step
   const [isPreview, setIsPreview] = useState(false);
   const [previewDays, setPreviewDays] = useState<PreviewDay[]>([]);
+  const [previewShiftOverrides, setPreviewShiftOverrides] = useState<Record<string, PreviewShift>>({});
   const [activeDragPreview, setActiveDragPreview] = useState<{ doctorName: string; isPanel: boolean } | null>(null);
+  const [previewDragWarning, setPreviewDragWarning] = useState<string>('');
 
   const previewSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -148,12 +163,19 @@ export function RoutesPage() {
     const allPanelDocs = selectedDoctorObjects.filter(d => d.hasPanel !== false);
     const allSuggestionDocs = selectedDoctorObjects.filter(d => d.hasPanel === false);
 
+    const filterAvailableOnDay = (docs: Doctor[], dow: number) =>
+      docs.filter(d => {
+        const hasAnyPeriod = d.workingHours.some(wh => wh.period != null);
+        if (!hasAnyPeriod) return true; // no hours configured at all — include on any day
+        return d.workingHours.some(wh => wh.dayOfWeek === dow && wh.period != null);
+      });
+
     const applyExclusions = (docs: Doctor[], dateStr: string, dow: number) => {
       let filtered = docs;
       if (excludedMornings.has(dateStr))
-        filtered = filtered.filter(d => { const wh = d.workingHours.find(w => w.dayOfWeek === dow); return !wh || wh.period !== 'M'; });
+        filtered = filtered.filter(d => { const wh = d.workingHours.find(w => w.dayOfWeek === dow && w.period != null); return !wh || wh.period !== 'M'; });
       if (excludedAfternoons.has(dateStr))
-        filtered = filtered.filter(d => { const wh = d.workingHours.find(w => w.dayOfWeek === dow); return !wh || wh.period !== 'T'; });
+        filtered = filtered.filter(d => { const wh = d.workingHours.find(w => w.dayOfWeek === dow && w.period != null); return !wh || wh.period !== 'T'; });
       return filtered;
     };
 
@@ -162,8 +184,8 @@ export function RoutesPage() {
       const dow = date.getDay();
       return [{
         dateStr: newRouteDay, date, dayOfWeek: dow,
-        panelDoctors: applyExclusions(allPanelDocs, newRouteDay, dow),
-        suggestionDoctors: applyExclusions(allSuggestionDocs, newRouteDay, dow),
+        panelDoctors: applyExclusions(filterAvailableOnDay(allPanelDocs, dow), newRouteDay, dow),
+        suggestionDoctors: applyExclusions(filterAvailableOnDay(allSuggestionDocs, dow), newRouteDay, dow),
       }];
     }
 
@@ -174,18 +196,24 @@ export function RoutesPage() {
       .map(dateStr => {
         const date = new Date(dateStr + 'T12:00:00');
         const dow = date.getDay();
-        let basePanelDocs = allPanelDocs;
+        let basePanelDocs: Doctor[];
+        let baseSuggestionDocs: Doctor[];
         if (multiWeekDistributions.length > 0) {
           const weekIdx = Math.floor((date.getTime() - weekStart.getTime()) / 604800000);
           const distrib = multiWeekDistributions[Math.max(0, Math.min(multiWeekDistributions.length - 1, weekIdx))];
-          basePanelDocs = (distrib?.[dow] ?? []).filter(d => d.hasPanel !== false);
+          basePanelDocs = filterAvailableOnDay((distrib?.[dow] ?? []).filter(d => d.hasPanel !== false), dow);
+          baseSuggestionDocs = filterAvailableOnDay((distrib?.[dow] ?? []).filter(d => d.hasPanel === false), dow);
         } else if (weeklyDistribution) {
-          basePanelDocs = (weeklyDistribution[dow] ?? []).filter(d => d.hasPanel !== false);
+          basePanelDocs = filterAvailableOnDay((weeklyDistribution[dow] ?? []).filter(d => d.hasPanel !== false), dow);
+          baseSuggestionDocs = filterAvailableOnDay((weeklyDistribution[dow] ?? []).filter(d => d.hasPanel === false), dow);
+        } else {
+          basePanelDocs = filterAvailableOnDay(allPanelDocs, dow);
+          baseSuggestionDocs = filterAvailableOnDay(allSuggestionDocs, dow);
         }
         return {
           dateStr, date, dayOfWeek: dow,
           panelDoctors: applyExclusions(basePanelDocs, dateStr, dow),
-          suggestionDoctors: applyExclusions(allSuggestionDocs, dateStr, dow),
+          suggestionDoctors: applyExclusions(baseSuggestionDocs, dateStr, dow),
         };
       });
   };
@@ -194,6 +222,7 @@ export function RoutesPage() {
     if (selectedDoctors.length === 0) return;
     const days = computePreview();
     setPreviewDays(days);
+    setPreviewShiftOverrides({});
     setIsPreview(true);
   };
 
@@ -232,6 +261,12 @@ export function RoutesPage() {
           dateStr: d.dateStr,
           panelDoctorIds: d.panelDoctors.map(doc => doc.id),
           suggestionDoctorIds: d.suggestionDoctors.map(doc => doc.id),
+          morningDoctorIds: [...d.panelDoctors, ...d.suggestionDoctors]
+            .filter(doc => (previewShiftOverrides[`${d.dateStr}|${doc.id}`] ?? getDoctorPreviewShift(doc, d.dayOfWeek)) === 'morning')
+            .map(doc => doc.id),
+          afternoonDoctorIds: [...d.panelDoctors, ...d.suggestionDoctors]
+            .filter(doc => (previewShiftOverrides[`${d.dateStr}|${doc.id}`] ?? getDoctorPreviewShift(doc, d.dayOfWeek)) === 'afternoon')
+            .map(doc => doc.id),
         })),
       });
 
@@ -240,6 +275,7 @@ export function RoutesPage() {
       setPreviewDays([]);
       setSelectedDoctors([]);
       setSelectedPharmacies([]);
+      setIncludePharmacies(false);
       setWeeklyDistribution(null);
       await refreshRoutes();
     } catch (err) {
@@ -651,12 +687,10 @@ export function RoutesPage() {
                             const panelVisits = sched.visits.filter(v => !v.isSuggestion);
                             const suggestionVisits = sched.visits.filter(v => v.isSuggestion);
                             const morning = panelVisits.filter(v => {
-                              const wh = v.doctor?.workingHours.find(w => w.dayOfWeek === sched.dayOfWeek);
-                              return !wh || wh.period === 'M' || wh.period === 'MT' || wh.period === 'AG';
+                              return !v.doctor || getDoctorPreviewShift(v.doctor, sched.dayOfWeek) === 'morning';
                             });
                             const afternoon = panelVisits.filter(v => {
-                              const wh = v.doctor?.workingHours.find(w => w.dayOfWeek === sched.dayOfWeek);
-                              return wh?.period === 'T';
+                              return !!v.doctor && getDoctorPreviewShift(v.doctor, sched.dayOfWeek) === 'afternoon';
                             });
                             const isToday = format(sched.date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
                             return (
@@ -766,6 +800,7 @@ export function RoutesPage() {
           setWeeklyDistribution(null);
           setSelectedDoctors([]);
           setSelectedPharmacies([]);
+          setIncludePharmacies(false);
           setCreateError('');
           setOnlyUnvisitedModal(false);
           setLockedState('');
@@ -1357,76 +1392,100 @@ export function RoutesPage() {
           {/* Pharmacy Selection */}
           {pharmacies.length > 0 && (
             <div className="border-t border-gray-100 pt-4">
-              <div className="flex items-center justify-between mb-2">
-                <label className="label mb-0 flex items-center gap-1.5">
+              {/* Toggle: include pharmacies */}
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includePharmacies}
+                  onChange={e => {
+                    const checked = e.target.checked;
+                    setIncludePharmacies(checked);
+                    if (checked) {
+                      setSelectedPharmacies(pharmacies.map(p => p.id));
+                    } else {
+                      setSelectedPharmacies([]);
+                    }
+                  }}
+                  className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500"
+                />
+                <span className="flex items-center gap-1.5 font-medium text-gray-800 text-sm">
                   <Pill className="w-4 h-4 text-teal-600" />
-                  Farmácias no roteiro <span className="text-gray-400 font-normal text-xs">(opcional)</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPharmacies(pharmacies.map(p => p.id))}
-                    className="text-xs text-teal-600 hover:text-teal-700"
-                  >
-                    Todas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPharmacies([])}
-                    className="text-xs text-gray-500 hover:text-gray-700"
-                  >
-                    Limpar
-                  </button>
-                </div>
-              </div>
+                  Incluir farmácias no roteiro
+                </span>
+              </label>
 
-              {selectedPharmacies.length > 0 && (
-                <div className="flex items-center gap-2 mb-2">
-                  <label className="text-xs text-gray-600">Máx. por dia:</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={pharmaciesPerDay}
-                    onChange={e => setPharmaciesPerDay(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="input w-16 text-sm py-1"
-                  />
-                  <span className="text-xs text-gray-400">farmácia{pharmaciesPerDay !== 1 ? 's' : ''}/dia</span>
-                </div>
-              )}
+              {includePharmacies && (
+                <div className="mt-3 space-y-3">
+                  {/* Per-day question */}
+                  <div className="flex items-center gap-3 bg-teal-50 rounded-lg px-3 py-2">
+                    <label className="text-sm text-gray-700 font-medium whitespace-nowrap">Quantas farmácias por dia?</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={pharmaciesPerDay}
+                      onChange={e => setPharmaciesPerDay(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="input w-16 text-sm py-1"
+                    />
+                    <span className="text-xs text-gray-400">farmácia{pharmaciesPerDay !== 1 ? 's' : ''}/dia (por proximidade)</span>
+                  </div>
 
-              <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
-                {pharmacies.map(pharmacy => {
-                  const displayName = pharmacy.name || pharmacy.address.neighborhood || pharmacy.address.city || 'Farmácia';
-                  const subLabel = [pharmacy.address.neighborhood, pharmacy.address.city].filter(Boolean).join(', ');
-                  return (
-                    <label
-                      key={pharmacy.id}
-                      className="flex items-center p-3 hover:bg-teal-50 cursor-pointer border-b border-gray-100 last:border-0"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedPharmacies.includes(pharmacy.id)}
-                        onChange={() => setSelectedPharmacies(prev =>
-                          prev.includes(pharmacy.id)
-                            ? prev.filter(id => id !== pharmacy.id)
-                            : [...prev, pharmacy.id]
-                        )}
-                        className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500"
-                      />
-                      <div className="ml-3 flex-1 min-w-0">
-                        <p className="font-medium text-gray-900 truncate">{displayName}</p>
-                        {subLabel && <p className="text-xs text-gray-500">{subLabel}</p>}
+                  {/* Pharmacy list — deselect to exclude */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-gray-500">Desmarque para excluir do roteiro</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPharmacies(pharmacies.map(p => p.id))}
+                          className="text-xs text-teal-600 hover:text-teal-700"
+                        >
+                          Todas
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPharmacies([])}
+                          className="text-xs text-gray-500 hover:text-gray-700"
+                        >
+                          Limpar
+                        </button>
                       </div>
-                      <Pill className="w-4 h-4 text-teal-400 shrink-0" />
-                    </label>
-                  );
-                })}
-              </div>
-              {selectedPharmacies.length > 0 && (
-                <p className="text-xs text-teal-600 mt-1.5">
-                  {selectedPharmacies.length} farmácia{selectedPharmacies.length !== 1 ? 's' : ''} selecionada{selectedPharmacies.length !== 1 ? 's' : ''} · até {pharmaciesPerDay}/dia (alocadas por proximidade)
-                </p>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
+                      {pharmacies.map(pharmacy => {
+                        const displayName = pharmacy.name || pharmacy.address.neighborhood || pharmacy.address.city || 'Farmácia';
+                        const subLabel = [pharmacy.address.neighborhood, pharmacy.address.city].filter(Boolean).join(', ');
+                        return (
+                          <label
+                            key={pharmacy.id}
+                            className="flex items-center p-3 hover:bg-teal-50 cursor-pointer border-b border-gray-100 last:border-0"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedPharmacies.includes(pharmacy.id)}
+                              onChange={() => setSelectedPharmacies(prev =>
+                                prev.includes(pharmacy.id)
+                                  ? prev.filter(id => id !== pharmacy.id)
+                                  : [...prev, pharmacy.id]
+                              )}
+                              className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500"
+                            />
+                            <div className="ml-3 flex-1 min-w-0">
+                              <p className="font-medium text-gray-900 truncate">{displayName}</p>
+                              {subLabel && <p className="text-xs text-gray-500">{subLabel}</p>}
+                            </div>
+                            <Pill className="w-4 h-4 text-teal-400 shrink-0" />
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {selectedPharmacies.length > 0 && (
+                      <p className="text-xs text-teal-600 mt-1.5">
+                        {selectedPharmacies.length} farmácia{selectedPharmacies.length !== 1 ? 's' : ''} selecionada{selectedPharmacies.length !== 1 ? 's' : ''}
+                      </p>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1456,8 +1515,14 @@ export function RoutesPage() {
               setActiveDragPreview(null);
               if (!e.over) return;
               const [, srcDate, docId, type] = (e.active.id as string).split('|');
-              const targetDate = (e.over.id as string).replace('pcol|', '');
-              if (srcDate === targetDate) return;
+              const [targetKind, targetDate, targetShift] = String(e.over.id).split('|');
+              if (targetKind !== 'pshift' || (targetShift !== 'morning' && targetShift !== 'afternoon')) return;
+
+              const sourceDay = previewDays.find(d => d.dateStr === srcDate);
+              const sourceDoctor = sourceDay && [...sourceDay.panelDoctors, ...sourceDay.suggestionDoctors].find(d => d.id === docId);
+              if (!sourceDoctor) return;
+              const currentShift = previewShiftOverrides[`${srcDate}|${docId}`] ?? getDoctorPreviewShift(sourceDoctor, sourceDay.dayOfWeek);
+              if (srcDate === targetDate && currentShift === targetShift) return;
 
               setPreviewDays(prev => {
                 const srcDay = prev.find(d => d.dateStr === srcDate);
@@ -1470,14 +1535,28 @@ export function RoutesPage() {
 
                 if (type === 'panel') {
                   movedDoc = srcDay.panelDoctors.find(d => d.id === docId);
-                  if (!movedDoc) return prev;
+                } else {
+                  movedDoc = srcDay.suggestionDoctors.find(d => d.id === docId);
+                }
+                if (!movedDoc) return prev;
+
+                // Block move if doctor has no availability on the target day
+                const targetDow = tgtDay.dayOfWeek;
+                const isAvailableOnTarget =
+                  movedDoc.workingHours.length === 0 ||
+                  movedDoc.workingHours.some(wh => wh.dayOfWeek === targetDow && wh.period != null);
+
+                if (!isAvailableOnTarget) {
+                  setPreviewDragWarning(`${movedDoc.name} não atende neste dia da semana.`);
+                  setTimeout(() => setPreviewDragWarning(''), 4000);
+                  return prev;
+                }
+
+                if (type === 'panel') {
                   newSrc.panelDoctors = srcDay.panelDoctors.filter(d => d.id !== docId);
-                  // Keep doctor as panel in target (it's a panel doctor)
                   if (!newTgt.panelDoctors.some(d => d.id === docId))
                     newTgt.panelDoctors = [...tgtDay.panelDoctors, movedDoc];
                 } else {
-                  movedDoc = srcDay.suggestionDoctors.find(d => d.id === docId);
-                  if (!movedDoc) return prev;
                   newSrc.suggestionDoctors = srcDay.suggestionDoctors.filter(d => d.id !== docId);
                   if (!newTgt.suggestionDoctors.some(d => d.id === docId))
                     newTgt.suggestionDoctors = [...tgtDay.suggestionDoctors, movedDoc];
@@ -1488,20 +1567,35 @@ export function RoutesPage() {
                   d.dateStr === targetDate ? newTgt : d
                 );
               });
+              setPreviewShiftOverrides(prev => {
+                const next = { ...prev };
+                delete next[`${srcDate}|${docId}`];
+                next[`${targetDate}|${docId}`] = targetShift;
+                return next;
+              });
             };
 
             // Draggable doctor chip for preview
-            const PreviewDocChip = ({ doc, dateStr, type }: { doc: Doctor; dateStr: string; type: 'panel' | 'suggestion' }) => {
+            const PreviewDocChip = ({ doc, dateStr, dayOfWeek, type }: { doc: Doctor; dateStr: string; dayOfWeek: number; type: 'panel' | 'suggestion' }) => {
               const dragId = `pdoc|${dateStr}|${doc.id}|${type}`;
               const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: dragId });
               const style = { transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.4 : 1 };
+              const unavailable = doc.workingHours.length > 0 &&
+                !doc.workingHours.some(wh => wh.dayOfWeek === dayOfWeek && wh.period != null);
               return (
                 <div ref={setNodeRef} style={style} {...attributes}
-                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 mb-0.5 select-none ${type === 'panel' ? 'bg-green-50 border border-green-200' : 'bg-orange-50 border border-orange-200'}`}>
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 mb-0.5 select-none ${
+                    unavailable
+                      ? 'bg-red-50 border border-red-300'
+                      : type === 'panel' ? 'bg-green-50 border border-green-200' : 'bg-orange-50 border border-orange-200'
+                  }`}>
                   <span {...listeners} className="shrink-0 text-gray-300 hover:text-gray-500 cursor-grab touch-none">
                     <GripVertical className="w-3 h-3" />
                   </span>
-                  <p className={`text-[10px] truncate flex-1 ${type === 'panel' ? 'text-gray-800' : 'text-orange-700'}`}>{doc.name}</p>
+                  {unavailable && (
+                    <AlertCircle className="w-3 h-3 text-red-500 shrink-0" role="img" aria-label="Não atende neste dia" />
+                  )}
+                  <p className={`text-[10px] truncate flex-1 ${unavailable ? 'text-red-700' : type === 'panel' ? 'text-gray-800' : 'text-orange-700'}`}>{doc.name}</p>
                   <button type="button" onClick={() => handleRemoveDoctorFromDay(dateStr, doc.id, type)}
                     className="text-gray-300 hover:text-red-500 shrink-0 text-xs leading-none">✕</button>
                 </div>
@@ -1509,19 +1603,29 @@ export function RoutesPage() {
             };
 
             // Droppable day column for preview
-            const PreviewDropCol = ({ day, children }: { day: PreviewDay; children: React.ReactNode }) => {
-              const { setNodeRef, isOver } = useDroppable({ id: `pcol|${day.dateStr}` });
+            const PreviewDropCol = ({ children }: { children: React.ReactNode }) => {
               return (
-                <div ref={setNodeRef}
-                  className={`flex-shrink-0 w-32 rounded-xl border overflow-hidden transition-colors ${isOver ? 'border-blue-400 ring-1 ring-blue-300 bg-blue-50/20' : 'border-gray-200 bg-white'}`}>
+                <div className="flex-shrink-0 w-32 rounded-xl border overflow-hidden transition-colors border-gray-200 bg-white">
                   {children}
                 </div>
               );
             };
 
+            const PreviewShiftDrop = ({ dateStr, shift, children }: { dateStr: string; shift: PreviewShift; children: React.ReactNode }) => {
+              const { setNodeRef, isOver } = useDroppable({ id: `pshift|${dateStr}|${shift}` });
+              return <section ref={setNodeRef} className={`transition-colors ${isOver ? 'bg-blue-100 ring-1 ring-inset ring-blue-300' : ''}`}>{children}</section>;
+            };
+
             return (
               <DndContext sensors={previewSensors} onDragStart={handlePreviewDragStart} onDragEnd={handlePreviewDragEnd}>
                 <div className="space-y-4">
+                  {/* Drag incompatibility warning */}
+                  {previewDragWarning && (
+                    <div className="bg-red-50 border border-red-300 rounded-xl p-3 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      <p className="text-sm text-red-700">{previewDragWarning}</p>
+                    </div>
+                  )}
                   {/* Over-capacity warning */}
                   {(() => {
                     const overDays = previewDays.filter(d => d.panelDoctors.length > visitsPerDay);
@@ -1570,7 +1674,7 @@ export function RoutesPage() {
                       <div className="overflow-x-auto -mx-1 px-1">
                         <div className="flex gap-2 pb-1" style={{ minWidth: `${days.length * 136}px` }}>
                           {days.map(day => (
-                            <PreviewDropCol key={day.dateStr} day={day}>
+                            <PreviewDropCol key={day.dateStr}>
                               <div className={`px-2 py-1.5 text-center border-b ${day.panelDoctors.length > visitsPerDay ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
                                 <p className="text-[11px] font-bold text-gray-800 capitalize">
                                   {format(day.date, 'EEE', { locale: ptBR })} {format(day.date, 'd/MM')}
@@ -1586,17 +1690,39 @@ export function RoutesPage() {
                                   {day.panelDoctors.length === 0 && day.suggestionDoctors.length === 0 && 'vazio'}
                                 </p>
                               </div>
-                              <div className="p-1.5 min-h-[40px]">
-                                {day.panelDoctors.map(doc => (
-                                  <PreviewDocChip key={doc.id} doc={doc} dateStr={day.dateStr} type="panel" />
-                                ))}
-                                {day.suggestionDoctors.length > 0 && (
-                                  <div className={day.panelDoctors.length > 0 ? 'pt-1 mt-1 border-t border-orange-100' : ''}>
-                                    {day.suggestionDoctors.map(doc => (
-                                      <PreviewDocChip key={doc.id} doc={doc} dateStr={day.dateStr} type="suggestion" />
-                                    ))}
-                                  </div>
-                                )}
+                              <div className="min-h-[64px]">
+                                {(['morning', 'afternoon'] as const).map(shift => {
+                                  const panel = day.panelDoctors.filter(doc => (previewShiftOverrides[`${day.dateStr}|${doc.id}`] ?? getDoctorPreviewShift(doc, day.dayOfWeek)) === shift);
+                                  const suggestions = day.suggestionDoctors.filter(doc => (previewShiftOverrides[`${day.dateStr}|${doc.id}`] ?? getDoctorPreviewShift(doc, day.dayOfWeek)) === shift);
+                                  const isMorning = shift === 'morning';
+                                  return (
+                                    <PreviewShiftDrop key={shift} dateStr={day.dateStr} shift={shift}>
+                                      <section className={!isMorning ? 'border-t border-gray-200' : ''}>
+                                      <div className={`flex items-center justify-between px-1.5 py-1 ${isMorning ? 'bg-sky-50' : 'bg-amber-50'}`}>
+                                        <span className={`text-[9px] font-bold uppercase tracking-wide ${isMorning ? 'text-sky-700' : 'text-amber-700'}`}>
+                                          {isMorning ? 'Manhã' : 'Tarde'}
+                                        </span>
+                                        <span className="text-[9px] text-gray-400">{panel.length + suggestions.length}</span>
+                                      </div>
+                                      <div className="p-1.5 min-h-[28px]">
+                                        {panel.map(doc => (
+                                          <PreviewDocChip key={doc.id} doc={doc} dateStr={day.dateStr} dayOfWeek={day.dayOfWeek} type="panel" />
+                                        ))}
+                                        {suggestions.length > 0 && (
+                                          <div className={panel.length > 0 ? 'pt-1 mt-1 border-t border-orange-100' : ''}>
+                                            {suggestions.map(doc => (
+                                              <PreviewDocChip key={doc.id} doc={doc} dateStr={day.dateStr} dayOfWeek={day.dayOfWeek} type="suggestion" />
+                                            ))}
+                                          </div>
+                                        )}
+                                        {panel.length === 0 && suggestions.length === 0 && (
+                                          <p className="text-[9px] text-gray-300 text-center py-0.5">Sem visitas</p>
+                                        )}
+                                      </div>
+                                      </section>
+                                    </PreviewShiftDrop>
+                                  );
+                                })}
                               </div>
                             </PreviewDropCol>
                           ))}
@@ -1636,6 +1762,8 @@ export function RoutesPage() {
                 setRouteName('');
                 setWeeklyDistribution(null);
                 setSelectedDoctors([]);
+                setSelectedPharmacies([]);
+                setIncludePharmacies(false);
                 setCreateError('');
                 setNumberOfWeeks(1);
                 setMultiWeekDistributions([]);
