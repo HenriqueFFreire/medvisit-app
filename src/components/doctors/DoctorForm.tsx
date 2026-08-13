@@ -40,6 +40,26 @@ const DEFAULT_WORKING_HOURS: WorkingHours[] = [
   { dayOfWeek: 5 }
 ];
 
+const BIRTHDAY_MONTHS = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+];
+
+function getBirthdayParts(value?: string): { day: number | ''; month: number | '' } {
+  if (!value) return { day: '', month: '' };
+  const parts = value.split('-').map(Number);
+  const [month, day] = parts.length === 2 ? parts : parts.slice(1);
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31
+    ? { month, day }
+    : { day: '', month: '' };
+}
+
+function getDaysInBirthdayMonth(month: number | ''): number {
+  if (!month) return 31;
+  // Leap year keeps 29 February available because the birth year is intentionally omitted.
+  return new Date(2024, month, 0).getDate();
+}
+
 export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading }: DoctorFormProps) {
   const initialAddressState = useMemo(() => {
     const primaryAddress = doctor?.address || {
@@ -87,6 +107,35 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
   const [isSearchingDirectory, setIsSearchingDirectory] = useState(false);
   const [directoryResult, setDirectoryResult] = useState<DirectoryDoctor | null>(null);
   const [directoryMessage, setDirectoryMessage] = useState<string | null>(null);
+  const initialBirthday = getBirthdayParts(doctor?.birthDate);
+  const [birthdayDay, setBirthdayDay] = useState<number | ''>(initialBirthday.day);
+  const [birthdayMonth, setBirthdayMonth] = useState<number | ''>(initialBirthday.month);
+
+  useEffect(() => {
+    const parts = getBirthdayParts(doctor?.birthDate);
+    setBirthdayDay(parts.day);
+    setBirthdayMonth(parts.month);
+  }, [doctor]);
+
+  const updateBirthday = (field: 'day' | 'month', value: string) => {
+    const next = {
+      day: field === 'day' ? (value ? Number(value) : '') : birthdayDay,
+      month: field === 'month' ? (value ? Number(value) : '') : birthdayMonth
+    };
+    if (field === 'day') setBirthdayDay(next.day);
+    if (field === 'month') setBirthdayMonth(next.month);
+    if (next.month && next.day) {
+      const maxDay = getDaysInBirthdayMonth(next.month);
+      const validDay = Math.min(Number(next.day), maxDay);
+      setBirthdayDay(validDay);
+      setFormData(prev => ({
+        ...prev,
+        birthDate: `${String(next.month).padStart(2, '0')}-${String(validDay).padStart(2, '0')}`
+      }));
+    } else {
+      setFormData(prev => ({ ...prev, birthDate: '' }));
+    }
+  };
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
@@ -508,15 +557,32 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
         )}
 
         <div>
-          <label className="label">Data de aniversário</label>
-          <input
-            type="date"
-            className="input"
-            value={formData.birthDate || ''}
-            onChange={e => handleInputChange('birthDate', e.target.value)}
-            max={new Date().toISOString().split('T')[0]}
-          />
-          <p className="mt-1 text-xs text-gray-500">Usada para exibir lembretes de aniversário na página inicial.</p>
+          <label className="label">Aniversário</label>
+          <div className="grid grid-cols-2 gap-3">
+            <select
+              className="input"
+              aria-label="Dia do aniversário"
+              value={birthdayDay}
+              onChange={event => updateBirthday('day', event.target.value)}
+            >
+              <option value="">Dia</option>
+              {Array.from({ length: getDaysInBirthdayMonth(birthdayMonth) }, (_, index) => index + 1).map(day => (
+                <option key={day} value={day}>{day}</option>
+              ))}
+            </select>
+            <select
+              className="input"
+              aria-label="Mês do aniversário"
+              value={birthdayMonth}
+              onChange={event => updateBirthday('month', event.target.value)}
+            >
+              <option value="">Mês</option>
+              {BIRTHDAY_MONTHS.map((month, index) => (
+                <option key={month} value={index + 1}>{month}</option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-1 text-xs text-gray-500">Informe somente o dia e o mês para os lembretes da página inicial.</p>
         </div>
 
         <div>

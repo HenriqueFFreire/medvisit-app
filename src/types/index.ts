@@ -51,7 +51,7 @@ export interface Doctor {
   category?: DoctorCategory;
   phone?: string;
   email?: string;
-  birthDate?: string; // YYYY-MM-DD
+  birthDate?: string; // MM-DD (legacy records may use YYYY-MM-DD)
   address: Address;
   addresses?: DoctorAddressEntry[];
   coordinates?: Coordinates;

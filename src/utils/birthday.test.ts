@@ -24,4 +24,9 @@ describe('birthday filters', () => {
   it('finds all birthdays in the current month', () => {
     expect(getBirthdaysThisMonth(doctors, today)).toHaveLength(3);
   });
+
+  it('accepts birthdays stored with only month and day', () => {
+    const withoutYear = [doctor('5', 'Daniel', '08-12')];
+    expect(getBirthdaysToday(withoutYear, today).map(item => item.doctor.name)).toEqual(['Daniel']);
+  });
 });

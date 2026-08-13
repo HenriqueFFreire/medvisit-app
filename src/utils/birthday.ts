@@ -10,8 +10,8 @@ export interface DoctorBirthday {
 function parseBirthday(doctor: Doctor, referenceYear: number): DoctorBirthday | null {
   if (!doctor.birthDate) return null;
   const parts = doctor.birthDate.split('-').map(Number);
-  if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
-  const [, month, day] = parts;
+  if ((parts.length !== 2 && parts.length !== 3) || parts.some(Number.isNaN)) return null;
+  const [month, day] = parts.length === 2 ? parts : parts.slice(1);
   const dateThisYear = new Date(referenceYear, month - 1, day, 12);
   if (dateThisYear.getMonth() !== month - 1 || dateThisYear.getDate() !== day) return null;
   return { doctor, day, month, dateThisYear };
