@@ -31,6 +31,13 @@ function getVisitLocation(visit: ScheduledVisit) {
   return [address.street, address.number, address.neighborhood].filter(Boolean).join(', ');
 }
 
+function getGreeting(date: Date): string {
+  const hour = date.getHours();
+  if (hour < 12) return 'Bom dia';
+  if (hour < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
 export function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -43,7 +50,9 @@ export function Dashboard() {
   const visitedCount = doctors.filter(doctor => isVisitedThisMonth(doctor, cycleDay)).length;
   const pendingCount = Math.max(doctors.length - visitedCount, 0);
   const progress = doctors.length > 0 ? Math.round((visitedCount / doctors.length) * 100) : 0;
-  const firstName = user?.name?.trim().split(' ')[0] || '';
+  const displayName = user?.name?.trim() || user?.email?.split('@')[0] || '';
+  const firstName = displayName.split(' ')[0];
+  const greeting = getGreeting(today);
 
   const todayVisits = useMemo(
     () => [...(todaySchedule?.visits ?? [])].sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime)),
@@ -65,7 +74,7 @@ export function Dashboard() {
           <div>
             <p className="text-sm font-medium text-blue-600">{format(today, "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
-              Bom dia{firstName ? `, ${firstName}` : ''}
+              {greeting}{firstName ? `, ${firstName}` : ''}
             </h1>
             <p className="mt-1 text-sm text-slate-500 lg:mt-0">Confira suas visitas e prioridades para hoje.</p>
           </div>
