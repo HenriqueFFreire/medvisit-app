@@ -2,33 +2,10 @@ import { MapPin, Phone, Clock, ChevronRight, CheckCircle2 } from 'lucide-react';
 import type { Doctor } from '../../types';
 import { formatShortAddress, formatTimeAgo } from '../../utils/format';
 import { useApp } from '../../contexts/AppContext';
+import { getDoctorPrimaryAddress } from '../../utils/doctorAddressUtils';
+import { isVisitedThisMonth } from '../../utils/visitCycle';
 
-export function getCycleRange(today: Date, cycleStartDay = 1): { start: Date; end: Date } {
-  const day = Math.min(Math.max(cycleStartDay, 1), 28);
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const todayDate = today.getDate();
-
-  let startYear = year;
-  let startMonth = month;
-  if (todayDate < day) {
-    startMonth = month - 1;
-    if (startMonth < 0) { startMonth = 11; startYear = year - 1; }
-  }
-
-  const cycleStart = new Date(startYear, startMonth, day, 0, 0, 0, 0);
-  // day-1 = 0 when day=1 → new Date(y, m+1, 0) = last day of month (JS behavior)
-  const cycleEnd = new Date(startYear, startMonth + 1, day - 1, 23, 59, 59, 999);
-  return { start: cycleStart, end: cycleEnd };
-}
-
-export function isVisitedThisMonth(doctor: Doctor, cycleStartDay = 1): boolean {
-  if (!doctor.lastVisitDate) return false;
-  const now = new Date();
-  const d = new Date(doctor.lastVisitDate);
-  const { start, end } = getCycleRange(now, cycleStartDay);
-  return d >= start && d <= end;
-}
+const DAY_LABELS: Record<number, string> = { 0: 'Dom', 1: 'Seg', 2: 'Ter', 3: 'Qua', 4: 'Qui', 5: 'Sex', 6: 'Sáb' };
 
 interface DoctorCardProps {
   doctor: Doctor;
@@ -42,6 +19,13 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
   const visitedThisMonth = isVisitedThisMonth(doctor, settings?.cycleStartDay ?? 1);
 
   const noPainel = doctor.hasPanel === false;
+  const attendanceHours = doctor.workingHours.filter(hours => hours.period != null);
+  const attendanceGroups = [
+    { key: 'M', label: 'Manhã', items: attendanceHours.filter(hours => hours.period === 'M') },
+    { key: 'T', label: 'Tarde', items: attendanceHours.filter(hours => hours.period === 'T') },
+    { key: 'MT', label: 'Dia inteiro', items: attendanceHours.filter(hours => hours.period === 'MT') },
+    { key: 'AG', label: 'Agendado', items: attendanceHours.filter(hours => hours.period === 'AG') },
+  ].filter(group => group.items.length > 0);
 
   return (
     <div
@@ -65,10 +49,16 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
                 Visitado
               </span>
             )}
+            {doctor.category && (
+              <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${doctor.category === 'A' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : doctor.category === 'C' ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-blue-100 text-blue-700 border-blue-300'}`}>
+                Categoria {doctor.category}
+              </span>
+            )}
           </div>
           <p className="text-sm text-gray-500">
             CRM {doctor.crm}
             {doctor.specialty && ` • ${doctor.specialty}`}
+            {doctor.category && ` • Categoria ${doctor.category}`}
           </p>
         </div>
         {onClick && <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0 ml-2" />}
@@ -77,13 +67,35 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
       <div className="mt-3 space-y-1.5">
         <div className="flex items-center text-sm text-gray-600">
           <MapPin className="w-4 h-4 mr-2 text-gray-400" />
-          <span className="truncate">{formatShortAddress(doctor.address)}</span>
+          <span className="truncate">{formatShortAddress(getDoctorPrimaryAddress(doctor))}</span>
         </div>
 
         {doctor.phone && (
           <div className="flex items-center text-sm text-gray-600">
             <Phone className="w-4 h-4 mr-2 text-gray-400" />
             <span>{doctor.phone}</span>
+          </div>
+        )}
+
+        {attendanceGroups.length > 0 && (
+          <div className="flex items-start text-sm text-gray-600">
+            <Clock className="w-4 h-4 mr-2 mt-0.5 text-gray-400 shrink-0" />
+            <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-gray-100 bg-gray-50">
+              {attendanceGroups.map((group, groupIndex) => {
+                const days = group.items
+                  .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+                  .map(hours => group.key === 'AG' && hours.specificTime
+                    ? `${DAY_LABELS[hours.dayOfWeek]} ${hours.specificTime}`
+                    : DAY_LABELS[hours.dayOfWeek])
+                  .join(', ');
+                return (
+                  <div key={group.key} className={`grid grid-cols-[76px_1fr] gap-2 px-2.5 py-1 text-[11px] ${groupIndex > 0 ? 'border-t border-gray-100' : ''}`}>
+                    <span className="font-semibold text-blue-700">{group.label}</span>
+                    <span className="text-gray-600">{days}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
