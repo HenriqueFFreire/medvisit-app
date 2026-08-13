@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Minus, Loader2 } from 'lucide-react';
-import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory } from '../../types';
+import { Plus, Minus, Loader2, Search, CheckCircle2 } from 'lucide-react';
+import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory, DirectoryDoctor } from '../../types';
 import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, BRAZILIAN_STATES, PERIOD_TIMES } from '../../types';
 import { validateEmail, validatePhone, validateCEP, formatCEP } from '../../utils/validation';
 import { getAddressFromCEP } from '../../services/geocoding';
 import { ButtonLoading } from '../common/Loading';
 import { createDoctorAddressEntry, buildDoctorAddressState } from '../../utils/doctorAddressUtils';
+import { findDirectoryDoctor } from '../../services/doctorDirectory';
 
 interface DoctorFormProps {
   doctor?: Doctor;
@@ -22,11 +23,13 @@ export interface DoctorFormData {
   category?: DoctorCategory;
   phone?: string;
   email?: string;
+  birthDate?: string;
   address: Address;
   addresses?: DoctorAddressEntry[];
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
+  shareInDirectory?: boolean;
 }
 
 const DEFAULT_WORKING_HOURS: WorkingHours[] = [
@@ -58,6 +61,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     category: doctor?.category || 'B',
     phone: doctor?.phone || '',
     email: doctor?.email || '',
+    birthDate: doctor?.birthDate || '',
     address: initialAddressState.primaryAddress,
     addresses: initialAddressState.addresses,
     workingHours: (doctor?.workingHours || DEFAULT_WORKING_HOURS).map(wh => ({
@@ -65,7 +69,8 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       addressId: wh.addressId ?? initialAddressState.addresses.find(entry => entry.isPrimary)?.id
     })),
     notes: doctor?.notes || '',
-    hasPanel: doctor?.hasPanel ?? true
+    hasPanel: doctor?.hasPanel ?? true,
+    shareInDirectory: doctor?.shareInDirectory ?? false
   }), [doctor, initialAddressState]);
 
   const [formData, setFormData] = useState<DoctorFormData>(defaultFormData);
@@ -79,6 +84,9 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
   const [crmWarning, setCrmWarning] = useState<string | null>(null);
   const [loadingAddressId, setLoadingAddressId] = useState<string | null>(null);
+  const [isSearchingDirectory, setIsSearchingDirectory] = useState(false);
+  const [directoryResult, setDirectoryResult] = useState<DirectoryDoctor | null>(null);
+  const [directoryMessage, setDirectoryMessage] = useState<string | null>(null);
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
@@ -128,6 +136,55 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
         address: primaryAddress
       };
     });
+  };
+
+  const searchDirectory = async () => {
+    if (!formData.crm.trim()) {
+      setErrors(prev => ({ ...prev, crm: 'Informe o CRM para pesquisar' }));
+      return;
+    }
+    setIsSearchingDirectory(true);
+    setDirectoryResult(null);
+    setDirectoryMessage(null);
+    try {
+      const result = await findDirectoryDoctor(formData.crm);
+      setDirectoryResult(result);
+      setDirectoryMessage(result ? null : 'CRM não encontrado no Diretório MedVisit.');
+    } catch (error) {
+      console.error('Erro ao consultar Diretório MedVisit:', error);
+      setDirectoryMessage('Não foi possível consultar o diretório. Tente novamente.');
+    } finally {
+      setIsSearchingDirectory(false);
+    }
+  };
+
+  const importDirectoryResult = () => {
+    if (!directoryResult) return;
+    setFormData(prev => {
+      const nextAddresses = (prev.addresses ?? []).map(entry => entry.isPrimary ? {
+        ...entry,
+        address: {
+          ...entry.address,
+          city: directoryResult.city || entry.address.city,
+          state: directoryResult.state || entry.address.state
+        }
+      } : entry);
+      return {
+        ...prev,
+        name: directoryResult.name,
+        crm: directoryResult.crm,
+        specialty: directoryResult.specialty ?? prev.specialty,
+        addresses: nextAddresses,
+        address: {
+          ...prev.address,
+          city: directoryResult.city || prev.address.city,
+          state: directoryResult.state || prev.address.state
+        }
+      };
+    });
+    setErrors(prev => ({ ...prev, name: '', crm: '', city: '', state: '' }));
+    setDirectoryMessage('Dados profissionais importados. Complete o endereço e os horários.');
+    setDirectoryResult(null);
   };
 
   const fillAddressFromCEP = async (entry: DoctorAddressEntry) => {
@@ -352,13 +409,31 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label">CRM *</label>
-            <input
-              type="text"
-              className={`input ${errors.crm ? 'border-red-500' : ''}`}
-              value={formData.crm}
-              onChange={e => handleInputChange('crm', e.target.value)}
-              placeholder="SP0001234"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className={`input flex-1 ${errors.crm ? 'border-red-500' : ''}`}
+                value={formData.crm}
+                onChange={e => {
+                  handleInputChange('crm', e.target.value);
+                  setDirectoryResult(null);
+                  setDirectoryMessage(null);
+                }}
+                placeholder="SP0001234"
+              />
+              {!doctor && (
+                <button
+                  type="button"
+                  onClick={searchDirectory}
+                  disabled={isSearchingDirectory}
+                  className="btn-secondary px-3 shrink-0"
+                  title="Buscar no Diretório MedVisit"
+                >
+                  {isSearchingDirectory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  <span className="hidden sm:inline ml-2">Buscar</span>
+                </button>
+              )}
+            </div>
             {errors.crm && <p className="text-sm text-red-500 mt-1">{errors.crm}</p>}
             {!errors.crm && crmWarning && (
               <div className="mt-1 flex items-center gap-1.5 bg-amber-50 border border-amber-300 rounded-lg px-2.5 py-1.5">
@@ -411,6 +486,39 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
           </div>
         </div>
 
+        {!doctor && directoryResult && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-blue-900">{directoryResult.name}</p>
+              <p className="text-xs text-blue-700 mt-1">
+                CRM {directoryResult.crm}
+                {directoryResult.specialty ? ` • ${directoryResult.specialty}` : ''}
+                {(directoryResult.city || directoryResult.state) ? ` • ${directoryResult.city}/${directoryResult.state}` : ''}
+              </p>
+            </div>
+            <button type="button" onClick={importDirectoryResult} className="btn-primary px-4 py-2 text-sm shrink-0">
+              Importar dados
+            </button>
+          </div>
+        )}
+        {!doctor && directoryMessage && (
+          <p className={`text-sm ${directoryMessage.startsWith('Dados') ? 'text-green-700' : 'text-gray-600'}`}>
+            {directoryMessage}
+          </p>
+        )}
+
+        <div>
+          <label className="label">Data de aniversário</label>
+          <input
+            type="date"
+            className="input"
+            value={formData.birthDate || ''}
+            onChange={e => handleInputChange('birthDate', e.target.value)}
+            max={new Date().toISOString().split('T')[0]}
+          />
+          <p className="mt-1 text-xs text-gray-500">Usada para exibir lembretes de aniversário na página inicial.</p>
+        </div>
+
         <div>
           <label className="label">Categoria</label>
           <select
@@ -435,6 +543,23 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
           </div>
           <span className="text-sm font-medium text-gray-700">
             {formData.hasPanel ? 'Com painel' : 'Sem painel'}
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded border-gray-300 text-blue-600"
+            checked={formData.shareInDirectory ?? false}
+            onChange={event => setFormData(prev => ({ ...prev, shareInDirectory: event.target.checked }))}
+          />
+          <span>
+            <span className="flex items-center gap-1.5 text-sm font-medium text-blue-900">
+              <CheckCircle2 className="w-4 h-4" /> Compartilhar no Diretório MedVisit
+            </span>
+            <span className="block mt-1 text-xs text-blue-700">
+              Publica somente nome, CRM, especialidade, cidade e UF. Seus contatos, endereço completo, aniversário, horários e anotações continuam privados.
+            </span>
           </span>
         </label>
       </div>

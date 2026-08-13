@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc,
-  query, orderBy, where
+  collection, doc, getDocs, getDoc, updateDoc, deleteDoc,
+  query, orderBy, where, writeBatch
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import type { Visit, VisitStatus, SampleDelivery, Doctor, Address, WorkingHours } from '../types';
+import type { Visit, VisitStatus, SampleDelivery, Doctor, Address, WorkingHours, DoctorAddressEntry } from '../types';
+import { toLocalDateString } from '../utils/date';
 
 interface UseVisitsResult {
   visits: Visit[];
@@ -40,9 +41,12 @@ function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
     name: data.name as string,
     crm: data.crm as string,
     specialty: data.specialty as string | undefined,
+    category: (data.category as Doctor['category'] | undefined) ?? 'B',
     phone: data.phone as string | undefined,
     email: data.email as string | undefined,
+    birthDate: data.birthDate as string | undefined,
     address: data.address as Address,
+    addresses: (data.addresses as DoctorAddressEntry[] | undefined) ?? [],
     coordinates: data.coordinates as Doctor['coordinates'],
     workingHours: (data.workingHours as WorkingHours[]) ?? [],
     notes: data.notes as string | undefined,
@@ -120,7 +124,7 @@ export function useVisits(): UseVisitsResult {
     if (!user) throw new Error('Usuário não autenticado');
 
     const now = new Date().toISOString();
-    const dateStr = data.date.toISOString().split('T')[0];
+    const dateStr = toLocalDateString(data.date);
 
     const visitData = {
       doctorId: data.doctorId,
@@ -137,24 +141,25 @@ export function useVisits(): UseVisitsResult {
       updatedAt: now
     };
 
-    const ref = await addDoc(collection(db, 'users', user.id, 'visits'), visitData);
-
-    // Update doctor's last visit date
-    await updateDoc(doc(db, 'users', user.id, 'doctors', data.doctorId), {
+    const visitRef = doc(collection(db, 'users', user.id, 'visits'));
+    const batch = writeBatch(db);
+    batch.set(visitRef, visitData);
+    batch.update(doc(db, 'users', user.id, 'doctors', data.doctorId), {
       lastVisitDate: dateStr
     });
 
-    // Update scheduled visit status if applicable
     if (data.scheduledVisitId) {
-      await updateDoc(doc(db, 'users', user.id, 'scheduled_visits', data.scheduledVisitId), {
+      batch.update(doc(db, 'users', user.id, 'scheduled_visits', data.scheduledVisitId), {
         status: data.status,
         actualStartTime: data.startTime,
         actualEndTime: data.endTime ?? null
       });
     }
 
+    await batch.commit();
+
     const doctor = await loadDoctorById(user.id, data.doctorId);
-    const newVisit = mapDocToVisit(ref.id, visitData as Record<string, unknown>, doctor);
+    const newVisit = mapDocToVisit(visitRef.id, visitData as Record<string, unknown>, doctor);
     setVisits(prev => [newVisit, ...prev]);
     return newVisit;
   };
@@ -204,8 +209,8 @@ export function useVisits(): UseVisitsResult {
 
   const getVisitsForPeriod = async (startDate: Date, endDate: Date): Promise<Visit[]> => {
     if (!user) return [];
-    const start = startDate.toISOString().split('T')[0];
-    const end = endDate.toISOString().split('T')[0];
+    const start = toLocalDateString(startDate);
+    const end = toLocalDateString(endDate);
     const q = query(
       collection(db, 'users', user.id, 'visits'),
       where('date', '>=', start),

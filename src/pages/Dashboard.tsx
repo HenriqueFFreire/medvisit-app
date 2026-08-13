@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight, CalendarDays, CheckCircle2, Clock3, MapPin,
-  Plus, Route, Stethoscope, UserPlus, Users
+  Cake, Gift, Plus, Route, Stethoscope, UserPlus, Users
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -12,6 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { isVisitedThisMonth } from '../utils/visitCycle';
 import type { ScheduledVisit, VisitStatus } from '../types';
+import { getBirthdaysThisMonth, getBirthdaysThisWeek, getBirthdaysToday } from '../utils/birthday';
 
 const STATUS_STYLES: Record<VisitStatus, { label: string; className: string }> = {
   completed: { label: 'Concluída', className: 'bg-emerald-100 text-emerald-700' },
@@ -46,6 +47,7 @@ export function Dashboard() {
   const { settings } = useApp();
   const cycleDay = settings?.cycleStartDay ?? 1;
   const today = new Date();
+  const [birthdayView, setBirthdayView] = useState<'week' | 'month'>('week');
 
   const visitedCount = doctors.filter(doctor => isVisitedThisMonth(doctor, cycleDay)).length;
   const pendingCount = Math.max(doctors.length - visitedCount, 0);
@@ -53,6 +55,10 @@ export function Dashboard() {
   const displayName = user?.name?.trim() || user?.email?.split('@')[0] || '';
   const firstName = displayName.split(' ')[0];
   const greeting = getGreeting(today);
+  const birthdaysToday = getBirthdaysToday(doctors, today);
+  const birthdaysThisWeek = getBirthdaysThisWeek(doctors, today);
+  const birthdaysThisMonth = getBirthdaysThisMonth(doctors, today);
+  const displayedBirthdays = birthdayView === 'week' ? birthdaysThisWeek : birthdaysThisMonth;
 
   const todayVisits = useMemo(
     () => [...(todaySchedule?.visits ?? [])].sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime)),
@@ -82,6 +88,23 @@ export function Dashboard() {
             <CalendarDays className="mr-2 h-4 w-4" /> Ver agenda completa
           </button>
         </header>
+
+        {birthdaysToday.length > 0 && (
+          <button
+            type="button"
+            onClick={() => navigate(`/doctors/${birthdaysToday[0].doctor.id}`)}
+            className="flex w-full items-center gap-3 rounded-xl border border-pink-200 bg-pink-50 px-4 py-2.5 text-left text-pink-800 shadow-sm"
+          >
+            <span className="rounded-lg bg-pink-100 p-2"><Gift className="h-5 w-5" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">
+                {birthdaysToday.length === 1 ? 'Aniversariante do dia' : `${birthdaysToday.length} aniversariantes hoje`}
+              </p>
+              <p className="truncate text-xs text-pink-700">{birthdaysToday.map(item => item.doctor.name).join(', ')}</p>
+            </div>
+            <ArrowRight className="h-4 w-4 shrink-0" />
+          </button>
+        )}
 
         <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] lg:gap-3">
           <section className="overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm">
@@ -143,7 +166,8 @@ export function Dashboard() {
           </section>
         </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:min-h-0 lg:flex-1 lg:overflow-hidden lg:p-4">
+        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[1.35fr_0.65fr]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:min-h-0 lg:overflow-hidden lg:p-4">
           <div className="mb-4 flex items-center justify-between">
             <div><h2 className="font-semibold text-slate-900">Agenda de hoje</h2><p className="text-xs text-slate-500">{todayVisits.length} compromisso{todayVisits.length === 1 ? '' : 's'} programado{todayVisits.length === 1 ? '' : 's'}</p></div>
             <button onClick={() => navigate('/agenda')} className="text-sm font-medium text-blue-600 hover:text-blue-700">Ver completa</button>
@@ -164,6 +188,33 @@ export function Dashboard() {
             </div>
           ) : <p className="rounded-xl bg-slate-50 py-8 text-center text-sm text-slate-500">Nenhuma visita programada para hoje.</p>}
         </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:min-h-0 lg:overflow-hidden">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="rounded-lg bg-pink-50 p-2 text-pink-600"><Cake className="h-5 w-5" /></span>
+              <div><h2 className="font-semibold text-slate-900">Aniversários</h2><p className="text-xs text-slate-500">Próximas comemorações</p></div>
+            </div>
+            <div className="flex rounded-lg bg-slate-100 p-1">
+              <button type="button" onClick={() => setBirthdayView('week')} className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${birthdayView === 'week' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Semana</button>
+              <button type="button" onClick={() => setBirthdayView('month')} className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${birthdayView === 'month' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Mês</button>
+            </div>
+          </div>
+          <div className="mt-3 space-y-1.5">
+            {displayedBirthdays.length > 0 ? displayedBirthdays.slice(0, 6).map(item => {
+              const isToday = item.day === today.getDate() && item.month === today.getMonth() + 1;
+              return (
+                <button key={item.doctor.id} type="button" onClick={() => navigate(`/doctors/${item.doctor.id}`)} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left ${isToday ? 'bg-pink-50' : 'hover:bg-slate-50'}`}>
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isToday ? 'bg-pink-500 text-white' : 'bg-blue-50 text-blue-600'}`}>{String(item.day).padStart(2, '0')}</span>
+                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-800">{item.doctor.name}</p><p className="text-[11px] text-slate-500">{String(item.day).padStart(2, '0')}/{String(item.month).padStart(2, '0')}{isToday ? ' · Hoje' : ''}</p></div>
+                </button>
+              );
+            }) : (
+              <p className="rounded-xl bg-slate-50 px-3 py-8 text-center text-xs text-slate-500">Nenhum aniversário nesta {birthdayView === 'week' ? 'semana' : 'mês'}.</p>
+            )}
+          </div>
+        </section>
+        </div>
 
         <section className="lg:shrink-0">
           <h2 className="mb-3 font-semibold text-slate-900">Ações rápidas</h2>

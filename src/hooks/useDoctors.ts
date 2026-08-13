@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc,
-  query, orderBy
+  query, orderBy, where, limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { geocodeAddress } from '../services/geocoding';
 import type { Doctor, Address, DoctorAddressEntry, WorkingHours, AttendancePeriod, DoctorCategory } from '../types';
 import { normalizeDoctorAddresses } from '../utils/doctorAddressUtils';
+import { toLocalDateString } from '../utils/date';
+import { publishDirectoryDoctor, unpublishDirectoryDoctor } from '../services/doctorDirectory';
 
 interface UseDoctorsResult {
   doctors: Doctor[];
@@ -30,11 +32,13 @@ interface CreateDoctorInput {
   category?: DoctorCategory;
   phone?: string;
   email?: string;
+  birthDate?: string;
   address: Address;
   addresses?: DoctorAddressEntry[];
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
+  shareInDirectory?: boolean;
 }
 
 // Firestore rejects `undefined`, including inside nested objects. Keep optional
@@ -53,6 +57,31 @@ function createPersistableAddress(address: Address): Address {
   };
 }
 
+async function serializeDoctorAddresses(
+  primaryAddress: Address,
+  addresses: DoctorAddressEntry[],
+  primaryCoordinates?: Doctor['coordinates']
+) {
+  const normalized = normalizeDoctorAddresses(primaryAddress, addresses);
+  const result = [];
+
+  for (const entry of normalized) {
+    let entryCoordinates = entry.isPrimary ? primaryCoordinates : entry.coordinates;
+    if (!entryCoordinates) {
+      entryCoordinates = await geocodeAddress(entry.address) || undefined;
+    }
+    result.push({
+      id: entry.id,
+      label: entry.label ?? 'Endereço',
+      isPrimary: entry.isPrimary,
+      address: createPersistableAddress(entry.address),
+      coordinates: entryCoordinates ?? null
+    });
+  }
+
+  return result;
+}
+
 function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
   return {
     id,
@@ -62,12 +91,14 @@ function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
     category: (data.category as DoctorCategory | undefined) ?? 'B',
     phone: data.phone as string | undefined,
     email: data.email as string | undefined,
+    birthDate: data.birthDate as string | undefined,
     address: data.address as Address,
     addresses: (data.addresses as DoctorAddressEntry[] | undefined) ?? [],
     coordinates: data.coordinates as Doctor['coordinates'],
     workingHours: (data.workingHours as WorkingHours[]) ?? [],
     notes: data.notes as string | undefined,
     hasPanel: data.hasPanel as boolean | undefined,
+    shareInDirectory: data.shareInDirectory as boolean | undefined,
     lastVisitDate: data.lastVisitDate ? new Date(data.lastVisitDate as string) : undefined,
     lastRoutedDate: data.lastRoutedDate ? new Date(data.lastRoutedDate as string) : undefined,
     createdAt: new Date(data.createdAt as string),
@@ -141,12 +172,7 @@ export function useDoctors(): UseDoctorsResult {
 
     const now = new Date().toISOString();
     const primaryAddress = createPersistableAddress(data.address);
-    const serializedAddresses = normalizeDoctorAddresses(primaryAddress, data.addresses ?? []).map(entry => ({
-      id: entry.id,
-      label: entry.label ?? 'Endereço',
-      isPrimary: entry.isPrimary,
-      address: createPersistableAddress(entry.address)
-    }));
+    const serializedAddresses = await serializeDoctorAddresses(primaryAddress, data.addresses ?? [], coordinates);
     const docData = {
       name: data.name,
       crm: data.crm,
@@ -154,6 +180,7 @@ export function useDoctors(): UseDoctorsResult {
       category: data.category ?? 'B',
       phone: data.phone ?? null,
       email: data.email ?? null,
+      birthDate: data.birthDate || null,
       address: primaryAddress,
       addresses: serializedAddresses,
       coordinates: coordinates ?? null,
@@ -165,12 +192,24 @@ export function useDoctors(): UseDoctorsResult {
       })),
       notes: data.notes ?? null,
       hasPanel: data.hasPanel ?? null,
+      shareInDirectory: data.shareInDirectory ?? false,
       lastVisitDate: null,
       createdAt: now,
       updatedAt: now
     };
 
     const ref = await withTimeout(addDoc(collection(db, 'users', user.id, 'doctors'), docData));
+    if (data.shareInDirectory) {
+      await publishDirectoryDoctor({
+        userId: user.id,
+        sourceDoctorId: ref.id,
+        name: data.name,
+        crm: data.crm,
+        specialty: data.specialty,
+        city: primaryAddress.city,
+        state: primaryAddress.state
+      });
+    }
     const newDoctor = mapDocToDoctor(ref.id, docData as Record<string, unknown>);
     setDoctors(prev => [...prev, newDoctor].sort((a, b) => a.name.localeCompare(b.name)));
     return newDoctor;
@@ -212,12 +251,11 @@ export function useDoctors(): UseDoctorsResult {
       fullAddress: data.address?.fullAddress ?? existing.address.fullAddress
     });
 
-    const serializedAddresses = normalizeDoctorAddresses(primaryAddress, data.addresses ?? existing.addresses ?? []).map(entry => ({
-      id: entry.id,
-      label: entry.label ?? 'Endereço',
-      isPrimary: entry.isPrimary,
-      address: createPersistableAddress(entry.address)
-    }));
+    const serializedAddresses = await serializeDoctorAddresses(
+      primaryAddress,
+      data.addresses ?? existing.addresses ?? [],
+      coordinates
+    );
 
     const updates: Record<string, unknown> = {
       updatedAt: new Date().toISOString(),
@@ -230,8 +268,10 @@ export function useDoctors(): UseDoctorsResult {
     if (data.category !== undefined) updates.category = data.category;
     if (data.phone !== undefined) updates.phone = data.phone;
     if (data.email !== undefined) updates.email = data.email;
+    if (data.birthDate !== undefined) updates.birthDate = data.birthDate || null;
     if (data.notes !== undefined) updates.notes = data.notes;
     if (data.hasPanel !== undefined) updates.hasPanel = data.hasPanel;
+    if (data.shareInDirectory !== undefined) updates.shareInDirectory = data.shareInDirectory;
     if (data.workingHours !== undefined) updates.workingHours = data.workingHours.map(wh => ({
       dayOfWeek: wh.dayOfWeek,
       addressId: wh.addressId ?? null,
@@ -246,6 +286,24 @@ export function useDoctors(): UseDoctorsResult {
     }
 
     await withTimeout(updateDoc(doc(db, 'users', user.id, 'doctors', id), updates));
+
+    const shouldShare = data.shareInDirectory ?? existing.shareInDirectory ?? false;
+    if (shouldShare) {
+      await publishDirectoryDoctor({
+        userId: user.id,
+        sourceDoctorId: id,
+        name: data.name ?? existing.name,
+        crm: data.crm ?? existing.crm,
+        specialty: data.specialty ?? existing.specialty,
+        city: primaryAddress.city,
+        state: primaryAddress.state
+      });
+      if (data.crm && data.crm !== existing.crm) {
+        await unpublishDirectoryDoctor(user.id, existing.crm);
+      }
+    } else if (existing.shareInDirectory) {
+      await unpublishDirectoryDoctor(user.id, existing.crm);
+    }
 
     const updatedDoctor: Doctor = {
       ...existing,
@@ -262,7 +320,28 @@ export function useDoctors(): UseDoctorsResult {
 
   const deleteDoctor = async (id: string): Promise<void> => {
     if (!user) throw new Error('Usuário não autenticado');
+    const [visitsSnap, scheduledSnap] = await Promise.all([
+      getDocs(query(
+        collection(db, 'users', user.id, 'visits'),
+        where('doctorId', '==', id),
+        limit(1)
+      )),
+      getDocs(query(
+        collection(db, 'users', user.id, 'scheduled_visits'),
+        where('doctorId', '==', id),
+        limit(1)
+      ))
+    ]);
+
+    if (!visitsSnap.empty || !scheduledSnap.empty) {
+      throw new Error('Este médico possui visitas ou roteiros vinculados e não pode ser excluído.');
+    }
+
+    const doctorToDelete = doctors.find(doctor => doctor.id === id);
     await withTimeout(deleteDoc(doc(db, 'users', user.id, 'doctors', id)));
+    if (doctorToDelete?.shareInDirectory) {
+      await unpublishDirectoryDoctor(user.id, doctorToDelete.crm);
+    }
     setDoctors(prev => prev.filter(d => d.id !== id));
   };
 
@@ -360,7 +439,7 @@ export function useDoctors(): UseDoctorsResult {
       new Date(doctor.lastVisitDate).getFullYear() === now.getFullYear() &&
       new Date(doctor.lastVisitDate).getMonth() === now.getMonth();
 
-    const newValue = alreadyVisited ? null : now.toISOString().split('T')[0];
+    const newValue = alreadyVisited ? null : toLocalDateString(now);
     await updateDoc(doc(db, 'users', user.id, 'doctors', id), {
       lastVisitDate: newValue,
       updatedAt: now.toISOString()

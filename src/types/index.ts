@@ -39,6 +39,7 @@ export interface DoctorAddressEntry {
   id: string;
   label?: string;
   address: Address;
+  coordinates?: Coordinates;
   isPrimary?: boolean;
 }
 
@@ -50,17 +51,29 @@ export interface Doctor {
   category?: DoctorCategory;
   phone?: string;
   email?: string;
+  birthDate?: string; // YYYY-MM-DD
   address: Address;
   addresses?: DoctorAddressEntry[];
   coordinates?: Coordinates;
   workingHours: WorkingHours[];
   notes?: string;
   hasPanel?: boolean;
+  shareInDirectory?: boolean;
   createdAt: Date;
   updatedAt: Date;
   syncStatus: 'synced';
   lastVisitDate?: Date;
   lastRoutedDate?: Date;
+}
+
+export interface DirectoryDoctor {
+  id: string;
+  name: string;
+  crm: string;
+  specialty?: string;
+  city: string;
+  state: string;
+  updatedAt: Date;
 }
 
 export interface Pharmacy {

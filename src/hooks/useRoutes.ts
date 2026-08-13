@@ -7,7 +7,7 @@ import {
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { generateScheduleFromDoctors, calculateRouteStats, insertDoctorOptimized, allocatePharmaciesPerDay, generatePharmacyVisits, type WeeklyRouteDistribution } from '../services/routing';
-import type { Route, RouteType, DailySchedule, ScheduledVisit, RouteStatus, DayStatus, Doctor, Pharmacy, Address, WorkingHours } from '../types';
+import type { Route, RouteType, DailySchedule, ScheduledVisit, RouteStatus, DayStatus, Doctor, Pharmacy, Address, WorkingHours, DoctorAddressEntry } from '../types';
 import { useApp } from '../contexts/AppContext';
 
 interface RescheduledVisitInfo {
@@ -73,9 +73,12 @@ function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
     name: data.name as string,
     crm: data.crm as string,
     specialty: data.specialty as string | undefined,
+    category: (data.category as Doctor['category'] | undefined) ?? 'B',
     phone: data.phone as string | undefined,
     email: data.email as string | undefined,
+    birthDate: data.birthDate as string | undefined,
     address: data.address as Address,
+    addresses: (data.addresses as DoctorAddressEntry[] | undefined) ?? [],
     coordinates: data.coordinates as Doctor['coordinates'],
     workingHours: (data.workingHours as WorkingHours[]) ?? [],
     notes: data.notes as string | undefined,
@@ -316,20 +319,24 @@ export function useRoutes(): UseRoutesResult {
       return diff + 1;
     };
 
+    // Filter doctors who are available on a given day of week
+    const filterAvailableOnDay = (docs: Doctor[], dow: number): Doctor[] =>
+      docs.filter(d => d.workingHours.length === 0 || d.workingHours.some(wh => wh.dayOfWeek === dow && wh.period != null));
+
     // Apply morning/afternoon shift exclusions to a doctor list for a given date
     const applyShiftExclusions = (dayDoctors: Doctor[], dateStr: string, dow: number): Doctor[] => {
       let filtered = dayDoctors;
       if (data.excludedMornings?.includes(dateStr)) {
         // Remove doctors who attend ONLY in the morning on this day
         filtered = filtered.filter(d => {
-          const wh = d.workingHours.find(w => w.dayOfWeek === dow);
+          const wh = d.workingHours.find(w => w.dayOfWeek === dow && w.period != null);
           return !wh || wh.period !== 'M';
         });
       }
       if (data.excludedAfternoons?.includes(dateStr)) {
         // Remove doctors who attend ONLY in the afternoon on this day
         filtered = filtered.filter(d => {
-          const wh = d.workingHours.find(w => w.dayOfWeek === dow);
+          const wh = d.workingHours.find(w => w.dayOfWeek === dow && w.period != null);
           return !wh || wh.period !== 'T';
         });
       }
@@ -392,9 +399,10 @@ export function useRoutes(): UseRoutesResult {
           if (!activeDays.includes(dow)) continue;
           const dateStr = date.toISOString().split('T')[0];
           if (data.excludedDates?.includes(dateStr)) continue;
-          const basePanel = weekDistrib?.[dow] || panelDoctors;
+          const basePanel = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
+          const baseSuggestion = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel === false) : filterAvailableOnDay(suggestionDoctors, dow);
           const dp = applyShiftExclusions(basePanel, dateStr, dow);
-          const ds = applyShiftExclusions(suggestionDoctors, dateStr, dow);
+          const ds = applyShiftExclusions(baseSuggestion, dateStr, dow);
           dayDoctorList.push({ dateStr, doctors: [...dp, ...ds] });
         }
       }
@@ -409,9 +417,10 @@ export function useRoutes(): UseRoutesResult {
           if (!activeDays.includes(dow)) continue;
           const dateStr = date.toISOString().split('T')[0];
           if (!data.excludedDates?.includes(dateStr)) {
-            const basePanel = weekDistrib?.[dow] || panelDoctors;
+            const basePanel = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
+            const baseSuggestion = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel === false) : filterAvailableOnDay(suggestionDoctors, dow);
             const dayPanel = applyShiftExclusions(basePanel, dateStr, dow);
-            const daySuggestions = applyShiftExclusions(suggestionDoctors, dateStr, dow);
+            const daySuggestions = applyShiftExclusions(baseSuggestion, dateStr, dow);
             const dayPharmacies = pharmacyMap.get(dateStr) ?? [];
             if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
               addDay(date, dow, dayPanel, daySuggestions, dayPharmacies);
@@ -434,9 +443,11 @@ export function useRoutes(): UseRoutesResult {
         if (dow >= 1 && dow <= 5 && activeDays.includes(dow) && activeWeeks.includes(weekOfMonth(cur))) {
           const dateStr = cur.toISOString().split('T')[0];
           if (!data.excludedDates?.includes(dateStr)) {
-            const basePanel = data.weeklyDistribution?.[dow] || panelDoctors;
+            const wd = data.weeklyDistribution;
+            const basePanel = wd ? (wd[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
+            const baseSuggestion = wd ? (wd[dow] ?? []).filter(d => d.hasPanel === false) : filterAvailableOnDay(suggestionDoctors, dow);
             const dp = applyShiftExclusions(basePanel, dateStr, dow);
-            const ds = applyShiftExclusions(suggestionDoctors, dateStr, dow);
+            const ds = applyShiftExclusions(baseSuggestion, dateStr, dow);
             dayDoctorList.push({ dateStr, doctors: [...dp, ...ds] });
           }
         }
@@ -450,9 +461,11 @@ export function useRoutes(): UseRoutesResult {
         if (dow >= 1 && dow <= 5 && activeDays.includes(dow) && activeWeeks.includes(weekOfMonth(current))) {
           const dateStr = current.toISOString().split('T')[0];
           if (!data.excludedDates?.includes(dateStr)) {
-            const basePanel = data.weeklyDistribution?.[dow] || panelDoctors;
+            const wd = data.weeklyDistribution;
+            const basePanel = wd ? (wd[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
+            const baseSuggestion = wd ? (wd[dow] ?? []).filter(d => d.hasPanel === false) : filterAvailableOnDay(suggestionDoctors, dow);
             const dayPanel = applyShiftExclusions(basePanel, dateStr, dow);
-            const daySuggestions = applyShiftExclusions(suggestionDoctors, dateStr, dow);
+            const daySuggestions = applyShiftExclusions(baseSuggestion, dateStr, dow);
             const dayPharmacies = pharmacyMap.get(dateStr) ?? [];
             if (dayPanel.length > 0 || daySuggestions.length > 0 || dayPharmacies.length > 0)
               addDay(current, dow, dayPanel, daySuggestions, dayPharmacies);
