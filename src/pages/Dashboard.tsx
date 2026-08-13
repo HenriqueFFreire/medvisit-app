@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight, CalendarDays, CheckCircle2, Clock3, MapPin,
-  Cake, Gift, Plus, Route, Stethoscope, UserPlus, Users
+  Cake, Gift, Plus, Route, Stethoscope, UserPlus, Users, CalendarOff
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, startOfDay, startOfWeek, endOfWeek, isWithinInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useDoctors } from '../hooks/useDoctors';
 import { useRoutes } from '../hooks/useRoutes';
@@ -13,6 +13,8 @@ import { useApp } from '../contexts/AppContext';
 import { isVisitedThisMonth } from '../utils/visitCycle';
 import type { ScheduledVisit, VisitStatus } from '../types';
 import { getBirthdaysThisMonth, getBirthdaysThisWeek, getBirthdaysToday } from '../utils/birthday';
+import { useLocalHolidays } from '../hooks/useLocalHolidays';
+import { getNationalHolidays, getStateHolidays, type Holiday } from '../data/holidays';
 
 const STATUS_STYLES: Record<VisitStatus, { label: string; className: string }> = {
   completed: { label: 'Concluída', className: 'bg-emerald-100 text-emerald-700' },
@@ -45,6 +47,7 @@ export function Dashboard() {
   const { doctors } = useDoctors();
   const { todaySchedule, isLoading: loadingSchedule } = useRoutes();
   const { settings } = useApp();
+  const { localHolidays } = useLocalHolidays();
   const cycleDay = settings?.cycleStartDay ?? 1;
   const today = new Date();
   const [birthdayView, setBirthdayView] = useState<'week' | 'month'>('week');
@@ -59,6 +62,35 @@ export function Dashboard() {
   const birthdaysThisWeek = getBirthdaysThisWeek(doctors, today);
   const birthdaysThisMonth = getBirthdaysThisMonth(doctors, today);
   const displayedBirthdays = birthdayView === 'week' ? birthdaysThisWeek : birthdaysThisMonth;
+  const workingStates = settings?.workingStates ?? [];
+
+  const dashboardHolidays = useMemo(() => {
+    const years = [today.getFullYear(), today.getFullYear() + 1];
+    const combined: Holiday[] = years.flatMap(year => [
+      ...getNationalHolidays(year),
+      ...workingStates.flatMap(state => getStateHolidays(year, state)),
+      ...localHolidays
+        .filter(holiday => !holiday.state || workingStates.includes(holiday.state))
+        .map(holiday => ({
+          id: holiday.id,
+          date: new Date(year, holiday.month - 1, holiday.day),
+          name: holiday.name,
+          type: 'local' as const,
+          city: holiday.city,
+          states: holiday.state ? [holiday.state] : undefined,
+        })),
+    ]);
+    const unique = new Map<string, Holiday>();
+    for (const holiday of combined) {
+      const key = `${format(holiday.date, 'yyyy-MM-dd')}|${holiday.name}`;
+      if (!unique.has(key)) unique.set(key, holiday);
+    }
+    return [...unique.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [localHolidays, today.getFullYear(), workingStates]);
+
+  const currentWeekRange = { start: startOfWeek(today, { weekStartsOn: 1 }), end: endOfWeek(today, { weekStartsOn: 1 }) };
+  const holidaysThisWeek = dashboardHolidays.filter(holiday => isWithinInterval(holiday.date, currentWeekRange));
+  const upcomingHolidays = dashboardHolidays.filter(holiday => holiday.date >= startOfDay(today)).slice(0, 4);
 
   const todayVisits = useMemo(
     () => [...(todaySchedule?.visits ?? [])].sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime)),
@@ -166,7 +198,7 @@ export function Dashboard() {
           </section>
         </div>
 
-        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[1.35fr_0.65fr]">
+        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[1.2fr_0.6fr_0.7fr]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:min-h-0 lg:overflow-hidden lg:p-4">
           <div className="mb-4 flex items-center justify-between">
             <div><h2 className="font-semibold text-slate-900">Agenda de hoje</h2><p className="text-xs text-slate-500">{todayVisits.length} compromisso{todayVisits.length === 1 ? '' : 's'} programado{todayVisits.length === 1 ? '' : 's'}</p></div>
@@ -212,6 +244,41 @@ export function Dashboard() {
             }) : (
               <p className="rounded-xl bg-slate-50 px-3 py-8 text-center text-xs text-slate-500">Nenhum aniversário nesta {birthdayView === 'week' ? 'semana' : 'mês'}.</p>
             )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm lg:min-h-0 lg:overflow-hidden">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="rounded-lg bg-amber-50 p-2 text-amber-600"><CalendarOff className="h-5 w-5" /></span>
+              <div><h2 className="font-semibold text-slate-900">Feriados</h2><p className="text-xs text-slate-500">Semana e próximos</p></div>
+            </div>
+            <button type="button" onClick={() => navigate('/holidays')} className="text-xs font-medium text-blue-600">Ver todos</button>
+          </div>
+          <div className="mt-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">Nesta semana</p>
+            {holidaysThisWeek.length > 0 ? (
+              <div className="mt-1 space-y-1">
+                {holidaysThisWeek.map(holiday => (
+                  <div key={`${holiday.date.toISOString()}-${holiday.name}`} className="rounded-lg bg-amber-50 px-2.5 py-1.5">
+                    <p className="truncate text-xs font-semibold text-amber-900">{holiday.name}</p>
+                    <p className="text-[10px] capitalize text-amber-700">{format(holiday.date, "EEE, d/MM", { locale: ptBR })}</p>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="mt-1 text-xs text-slate-400">Nenhum feriado nesta semana.</p>}
+          </div>
+          <div className="mt-3 border-t border-slate-100 pt-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Próximos feriados</p>
+            <div className="mt-1 space-y-1">
+              {upcomingHolidays.map(holiday => (
+                <div key={`${holiday.date.toISOString()}-${holiday.name}`} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-50">
+                  <span className="w-10 shrink-0 text-[11px] font-bold text-blue-600">{format(holiday.date, 'd/MM')}</span>
+                  <p className="truncate text-xs text-slate-700">{holiday.name}</p>
+                </div>
+              ))}
+              {upcomingHolidays.length === 0 && <p className="text-xs text-slate-400">Nenhum próximo feriado.</p>}
+            </div>
           </div>
         </section>
         </div>

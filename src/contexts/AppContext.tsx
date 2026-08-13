@@ -18,7 +18,8 @@ const DEFAULT_SETTINGS = {
   defaultVisitDuration: 10,
   defaultVisitsPerDay: 11,
   minimumInterval: 15,
-  cycleStartDay: 1
+  cycleStartDay: 1,
+  workingStates: [] as string[]
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -44,23 +45,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const snap = await getDoc(doc(db, 'users', user.id, 'settings', 'main'));
-      if (snap.exists()) {
-        const data = snap.data();
-        setSettings({
-          id: 'main',
-          userId: user.id,
-          workStartTime: data.workStartTime ?? DEFAULT_SETTINGS.workStartTime,
-          workEndTime: data.workEndTime ?? DEFAULT_SETTINGS.workEndTime,
-          defaultVisitDuration: data.defaultVisitDuration ?? DEFAULT_SETTINGS.defaultVisitDuration,
-          defaultVisitsPerDay: data.defaultVisitsPerDay ?? DEFAULT_SETTINGS.defaultVisitsPerDay,
-          minimumInterval: data.minimumInterval ?? DEFAULT_SETTINGS.minimumInterval,
-          cycleStartDay: data.cycleStartDay ?? DEFAULT_SETTINGS.cycleStartDay
-        });
-      } else {
-        const defaultSettings: Settings = { id: 'main', userId: user.id, ...DEFAULT_SETTINGS };
-        await setDoc(doc(db, 'users', user.id, 'settings', 'main'), DEFAULT_SETTINGS);
-        setSettings(defaultSettings);
+      try {
+        const snap = await getDoc(doc(db, 'users', user.id, 'settings', 'main'));
+        if (snap.exists()) {
+          const data = snap.data();
+          setSettings({
+            id: 'main',
+            userId: user.id,
+            workStartTime: data.workStartTime ?? DEFAULT_SETTINGS.workStartTime,
+            workEndTime: data.workEndTime ?? DEFAULT_SETTINGS.workEndTime,
+            defaultVisitDuration: data.defaultVisitDuration ?? DEFAULT_SETTINGS.defaultVisitDuration,
+            defaultVisitsPerDay: data.defaultVisitsPerDay ?? DEFAULT_SETTINGS.defaultVisitsPerDay,
+            minimumInterval: data.minimumInterval ?? DEFAULT_SETTINGS.minimumInterval,
+            cycleStartDay: data.cycleStartDay ?? DEFAULT_SETTINGS.cycleStartDay,
+            workingStates: Array.isArray(data.workingStates) ? data.workingStates : DEFAULT_SETTINGS.workingStates
+          });
+        } else {
+          const defaultSettings: Settings = { id: 'main', userId: user.id, ...DEFAULT_SETTINGS };
+          await setDoc(doc(db, 'users', user.id, 'settings', 'main'), DEFAULT_SETTINGS);
+          setSettings(defaultSettings);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar configurações:', error);
+        setSettings({ id: 'main', userId: user.id, ...DEFAULT_SETTINGS });
       }
     };
 
@@ -70,7 +77,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateSettings = async (updates: Partial<Settings>) => {
     if (!settings || !user) return;
     const updatedSettings = { ...settings, ...updates };
-    const { id: _id, userId: _userId, ...data } = updatedSettings;
+    const data = {
+      workStartTime: updatedSettings.workStartTime,
+      workEndTime: updatedSettings.workEndTime,
+      defaultVisitDuration: updatedSettings.defaultVisitDuration,
+      defaultVisitsPerDay: updatedSettings.defaultVisitsPerDay,
+      minimumInterval: updatedSettings.minimumInterval,
+      cycleStartDay: updatedSettings.cycleStartDay ?? DEFAULT_SETTINGS.cycleStartDay,
+      workingStates: updatedSettings.workingStates ?? DEFAULT_SETTINGS.workingStates
+    };
     await setDoc(doc(db, 'users', user.id, 'settings', 'main'), data, { merge: true });
     setSettings(updatedSettings);
   };
@@ -82,6 +97,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Context hooks intentionally share the provider module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useApp() {
   const context = useContext(AppContext);
   if (!context) throw new Error('useApp must be used within an AppProvider');

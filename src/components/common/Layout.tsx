@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, ClipboardList, Users, History, Settings, Wifi, WifiOff, CalendarDays, Pill, MapPin } from 'lucide-react';
+import { Home, ClipboardList, Users, History, Settings, Wifi, WifiOff, CalendarDays, Pill, MapPin, CalendarOff } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 
 interface LayoutProps {
@@ -11,6 +11,7 @@ const navItems = [
   { path: '/', icon: Home, label: 'Home' },
   { path: '/routes', icon: ClipboardList, label: 'Roteiro' },
   { path: '/agenda', icon: CalendarDays, label: 'Agenda' },
+  { path: '/holidays', icon: CalendarOff, label: 'Feriados' },
   { path: '/doctors', icon: Users, label: 'Médicos' },
   { path: '/pharmacies', icon: Pill, label: 'Farmácias' },
   { path: '/history', icon: History, label: 'Histórico' },

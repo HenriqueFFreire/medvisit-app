@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { generateScheduleFromDoctors, calculateRouteStats, insertDoctorOptimized, allocatePharmaciesPerDay, generatePharmacyVisits, type WeeklyRouteDistribution } from '../services/routing';
 import type { Route, RouteType, DailySchedule, ScheduledVisit, RouteStatus, DayStatus, Doctor, Pharmacy, Address, WorkingHours, DoctorAddressEntry } from '../types';
 import { useApp } from '../contexts/AppContext';
+import { fromLocalDateString, toLocalDateString } from '../utils/date';
 
 interface RescheduledVisitInfo {
   doctor: Doctor;
@@ -155,14 +156,14 @@ async function loadScheduleWithVisits(uid: string, scheduleId: string, scheduleD
       rescheduledFromId: data.rescheduledFromId as string | undefined,
       rescheduledToId: data.rescheduledToId as string | undefined,
       isSuggestion: (data.isSuggestion as boolean) || false,
-      rescheduledFromDate: data.rescheduledFromDate ? new Date(data.rescheduledFromDate as string) : undefined
+      rescheduledFromDate: data.rescheduledFromDate ? fromLocalDateString(data.rescheduledFromDate as string) : undefined
     };
   });
 
   return {
     id: scheduleId,
     routeId: scheduleData.routeId as string,
-    date: new Date(scheduleData.date as string),
+    date: fromLocalDateString(scheduleData.date as string),
     dayOfWeek: scheduleData.dayOfWeek as number,
     visits,
     totalDistance: scheduleData.totalDistance as number | undefined,
@@ -193,8 +194,8 @@ export function useRoutes(): UseRoutesResult {
           id: d.id,
           name: r.name as string | undefined,
           routeType: (r.routeType as RouteType) || 'week',
-          weekStartDate: new Date(r.weekStartDate as string),
-          weekEndDate: new Date(r.weekEndDate as string),
+          weekStartDate: fromLocalDateString(r.weekStartDate as string),
+          weekEndDate: fromLocalDateString(r.weekEndDate as string),
           visitsPerDay: r.visitsPerDay as number,
           visitDuration: r.visitDuration as number,
           totalDistance: r.totalDistance as number | undefined,
@@ -216,7 +217,7 @@ export function useRoutes(): UseRoutesResult {
       setCurrentRoute(currentWeekRoute || null);
 
       if (currentWeekRoute) {
-        const todayStr = startOfDay(today).toISOString().split('T')[0];
+        const todayStr = toLocalDateString(startOfDay(today));
         const schedQ = query(
           collection(db, 'users', user.id, 'daily_schedules'),
           where('routeId', '==', currentWeekRoute.id),
@@ -419,7 +420,7 @@ export function useRoutes(): UseRoutesResult {
     } else if (data.routeType === 'day') {
       routeStart = data.startDate;
       routeEnd = data.startDate;
-      const dateStr = data.startDate.toISOString().split('T')[0];
+      const dateStr = toLocalDateString(data.startDate);
       const dow = data.startDate.getDay();
       if (!data.excludedDates?.includes(dateStr)) {
         const dayPanel = applyShiftExclusions(panelDoctors, dateStr, dow);
@@ -444,7 +445,7 @@ export function useRoutes(): UseRoutesResult {
           const date = addDays(weekStart, i);
           const dow = date.getDay();
           if (!activeDays.includes(dow)) continue;
-          const dateStr = date.toISOString().split('T')[0];
+          const dateStr = toLocalDateString(date);
           if (data.excludedDates?.includes(dateStr)) continue;
           const basePanel = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
           const baseSuggestion = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel === false) : filterAvailableOnDay(suggestionDoctors, dow);
@@ -462,7 +463,7 @@ export function useRoutes(): UseRoutesResult {
           const date = addDays(weekStart, i);
           const dow = date.getDay();
           if (!activeDays.includes(dow)) continue;
-          const dateStr = date.toISOString().split('T')[0];
+          const dateStr = toLocalDateString(date);
           if (!data.excludedDates?.includes(dateStr)) {
             const basePanel = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
             const baseSuggestion = weekDistrib ? (weekDistrib[dow] ?? []).filter(d => d.hasPanel === false) : filterAvailableOnDay(suggestionDoctors, dow);
@@ -488,7 +489,7 @@ export function useRoutes(): UseRoutesResult {
       while (cur <= monthEnd) {
         const dow = cur.getDay();
         if (dow >= 1 && dow <= 5 && activeDays.includes(dow) && activeWeeks.includes(weekOfMonth(cur))) {
-          const dateStr = cur.toISOString().split('T')[0];
+          const dateStr = toLocalDateString(cur);
           if (!data.excludedDates?.includes(dateStr)) {
             const wd = data.weeklyDistribution;
             const basePanel = wd ? (wd[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
@@ -506,7 +507,7 @@ export function useRoutes(): UseRoutesResult {
       while (current <= monthEnd) {
         const dow = current.getDay();
         if (dow >= 1 && dow <= 5 && activeDays.includes(dow) && activeWeeks.includes(weekOfMonth(current))) {
-          const dateStr = current.toISOString().split('T')[0];
+          const dateStr = toLocalDateString(current);
           if (!data.excludedDates?.includes(dateStr)) {
             const wd = data.weeklyDistribution;
             const basePanel = wd ? (wd[dow] ?? []).filter(d => d.hasPanel !== false) : filterAvailableOnDay(panelDoctors, dow);
@@ -528,8 +529,8 @@ export function useRoutes(): UseRoutesResult {
     const routeData = {
       ...(data.name ? { name: data.name } : {}),
       routeType: data.routeType,
-      weekStartDate: routeStart.toISOString().split('T')[0],
-      weekEndDate: routeEnd.toISOString().split('T')[0],
+      weekStartDate: toLocalDateString(routeStart),
+      weekEndDate: toLocalDateString(routeEnd),
       visitsPerDay: data.visitsPerDay,
       visitDuration: data.visitDuration,
       totalDistance,
@@ -549,7 +550,7 @@ export function useRoutes(): UseRoutesResult {
       scheduleRefs.push(schedRef.id);
       writes.push({ ref: schedRef, data: {
         routeId: routeRef.id,
-        date: sched.date.toISOString().split('T')[0],
+        date: toLocalDateString(sched.date),
         dayOfWeek: sched.dayOfWeek,
         totalDistance: sched.totalDistance ?? 0,
         totalTime: sched.totalTime ?? 0,
@@ -728,7 +729,7 @@ export function useRoutes(): UseRoutesResult {
 
   const getDailySchedule = useCallback(async (routeId: string, date: Date): Promise<DailySchedule | null> => {
     if (!user) return null;
-    const dateStr = startOfDay(date).toISOString().split('T')[0];
+    const dateStr = toLocalDateString(startOfDay(date));
     const q = query(
       collection(db, 'users', user.id, 'daily_schedules'),
       where('routeId', '==', routeId),
@@ -748,7 +749,7 @@ export function useRoutes(): UseRoutesResult {
     if (updates.actualEndTime !== undefined) row.actualEndTime = updates.actualEndTime;
     if (updates.rescheduledToId !== undefined) row.rescheduledToId = updates.rescheduledToId;
     if (updates.rescheduledFromId !== undefined) row.rescheduledFromId = updates.rescheduledFromId;
-    if (updates.rescheduledFromDate !== undefined) row.rescheduledFromDate = (updates.rescheduledFromDate as Date).toISOString().split('T')[0];
+    if (updates.rescheduledFromDate !== undefined) row.rescheduledFromDate = toLocalDateString(updates.rescheduledFromDate as Date);
     await updateDoc(doc(db, 'users', user.id, 'scheduled_visits', visitId), row);
     await loadRoutes();
   };
@@ -762,7 +763,7 @@ export function useRoutes(): UseRoutesResult {
     const workingDays = ((doctorSnap.data().workingHours ?? []) as Array<{ dayOfWeek: number }>).map(wh => wh.dayOfWeek);
     if (workingDays.length === 0) return null;
 
-    const afterDateStr = afterDate.toISOString().split('T')[0];
+    const afterDateStr = toLocalDateString(afterDate);
 
     const q = query(
       collection(db, 'users', user.id, 'daily_schedules'),
@@ -775,7 +776,7 @@ export function useRoutes(): UseRoutesResult {
       const data = schedDoc.data() as Record<string, unknown>;
       if (data.status === 'completed') continue;
 
-      const scheduleDate = new Date(data.date as string);
+      const scheduleDate = fromLocalDateString(data.date as string);
       const dayOfWeek = scheduleDate.getDay();
       if (!workingDays.includes(dayOfWeek)) continue;
 
@@ -842,7 +843,7 @@ export function useRoutes(): UseRoutesResult {
     const optimizedDoctors = insertDoctorOptimized(existingDoctors, doctor);
     const newVisits = generateScheduleFromDoctors(
       optimizedDoctors,
-      new Date(targetSchedule.date as string),
+      fromLocalDateString(targetSchedule.date as string),
       visitDuration,
       settings?.workStartTime || '07:00',
       settings?.workEndTime || '19:00',
@@ -926,7 +927,7 @@ export function useRoutes(): UseRoutesResult {
       if (!doctor) continue;
 
       const schedData = schedSnap.data() as Record<string, unknown>;
-      const nextDay = await findNextAvailableDay(visit.doctorId as string, new Date(schedData.date as string));
+      const nextDay = await findNextAvailableDay(visit.doctorId as string, fromLocalDateString(schedData.date as string));
 
       if (nextDay) {
         await rescheduleVisit(visit.id, nextDay.id);
@@ -949,8 +950,8 @@ export function useRoutes(): UseRoutesResult {
 
   const getMonthSchedules = useCallback(async (month: Date): Promise<{ date: string; scheduleId: string; visitCount: number; status: string }[]> => {
     if (!user) return [];
-    const start = startOfMonth(month).toISOString().split('T')[0];
-    const end = endOfMonth(month).toISOString().split('T')[0];
+    const start = toLocalDateString(startOfMonth(month));
+    const end = toLocalDateString(endOfMonth(month));
     const q = query(
       collection(db, 'users', user.id, 'daily_schedules'),
       where('date', '>=', start),

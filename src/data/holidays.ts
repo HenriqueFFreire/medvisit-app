@@ -3,8 +3,10 @@
 export interface Holiday {
   date: Date;
   name: string;
-  type: 'national' | 'state';
+  type: 'national' | 'state' | 'local';
   states?: string[]; // undefined = all states (national)
+  city?: string;
+  id?: string; // for local holidays (enables deletion)
 }
 
 // ── Easter calculation (Anonymous Gregorian algorithm) ──
@@ -144,6 +146,7 @@ const STATE_HOLIDAYS_DATA: { month: number; day: number; name: string; states: s
   { month: 11, day: 20, name: 'Dia da Consciência Negra',                  states: ['SP'] },
 
   // SE — Sergipe
+  { month: 3,  day: 17, name: 'Fundação de Aracaju',                        states: ['SE'] },
   { month: 7,  day: 8,  name: 'Emancipação Política de Sergipe',           states: ['SE'] },
 
   // TO — Tocantins
