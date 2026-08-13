@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { User, Clock, MapPin, Database, LogOut, Info, Shield, KeyRound, Eye, EyeOff, RefreshCw, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { User, Clock, MapPin, Database, LogOut, Info, Shield, KeyRound, Eye, EyeOff, RefreshCw, ChevronRight, Pencil } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { useDoctors } from '../hooks/useDoctors';
@@ -29,6 +29,7 @@ export function SettingsPage() {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   const [profileName, setProfileName] = useState(user?.name || '');
+  const [profileError, setProfileError] = useState('');
   const [workStartTime, setWorkStartTime] = useState(settings?.workStartTime || '07:00');
   const [workEndTime, setWorkEndTime] = useState(settings?.workEndTime || '19:00');
   const [defaultVisitDuration, setDefaultVisitDuration] = useState(settings?.defaultVisitDuration || 10);
@@ -38,10 +39,21 @@ export function SettingsPage() {
   const [cycleStartDay, setCycleStartDay] = useState(settings?.cycleStartDay ?? 1);
   const [isSaving, setIsSaving] = useState(false);
 
+  useEffect(() => {
+    setProfileName(user?.name || '');
+  }, [user?.name]);
+
   const handleSaveProfile = async () => {
+    const normalizedName = profileName.trim().replace(/\s+/g, ' ');
+    if (!normalizedName) {
+      setProfileError('Informe o nome que deve aparecer na página inicial.');
+      return;
+    }
     setIsSaving(true);
     try {
-      await updateUser({ name: profileName });
+      await updateUser({ name: normalizedName });
+      setProfileName(normalizedName);
+      setProfileError('');
       setShowProfileModal(false);
     } finally {
       setIsSaving(false);
@@ -121,20 +133,25 @@ export function SettingsPage() {
       <div className="p-4 space-y-4">
         {/* User Profile */}
         <div className="card">
-          <div
-            className="flex items-center justify-between cursor-pointer"
-            onClick={() => setShowProfileModal(true)}
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left"
+            onClick={() => { setProfileName(user?.name || ''); setProfileError(''); setShowProfileModal(true); }}
           >
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
                 <User className="w-6 h-6 text-blue-600" />
               </div>
               <div>
-                <p className="font-medium text-gray-900">{user?.name}</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Nome do usuário</p>
+                <p className="font-medium text-gray-900">{user?.name || 'Clique para informar seu nome'}</p>
                 <p className="text-sm text-gray-500">{user?.email}</p>
               </div>
             </div>
-          </div>
+            <span className="flex items-center gap-1.5 text-sm font-medium text-blue-600">
+              <Pencil className="h-4 w-4" /> Editar
+            </span>
+          </button>
         </div>
 
         {/* Work Hours */}
@@ -260,13 +277,18 @@ export function SettingsPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="label">Nome</label>
+            <label className="label">Nome do usuário *</label>
             <input
               type="text"
-              className="input"
+              className={`input ${profileError ? 'border-red-500' : ''}`}
               value={profileName}
-              onChange={e => setProfileName(e.target.value)}
+              onChange={e => { setProfileName(e.target.value); if (profileError) setProfileError(''); }}
+              placeholder="Ex.: Henrique Freire"
+              autoFocus
+              maxLength={80}
             />
+            {profileError && <p className="mt-1 text-sm text-red-600">{profileError}</p>}
+            <p className="mt-1 text-xs text-gray-500">Este nome aparecerá após a saudação na página inicial.</p>
           </div>
 
           <div>
@@ -282,14 +304,14 @@ export function SettingsPage() {
 
           <div className="flex gap-3">
             <button
-              onClick={() => setShowProfileModal(false)}
+              onClick={() => { setProfileName(user?.name || ''); setProfileError(''); setShowProfileModal(false); }}
               className="btn-secondary flex-1"
             >
               Cancelar
             </button>
             <button
               onClick={handleSaveProfile}
-              disabled={isSaving}
+              disabled={isSaving || !profileName.trim()}
               className="btn-primary flex-1"
             >
               {isSaving ? <ButtonLoading /> : 'Salvar'}
