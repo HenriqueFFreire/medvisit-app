@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, MapPin, Flag, CalendarOff, Plus, Trash2, X }
 import { useDoctors } from '../hooks/useDoctors';
 import { useLocalHolidays } from '../hooks/useLocalHolidays';
 import { useApp } from '../contexts/AppContext';
+import { useMunicipalHolidays } from '../hooks/useMunicipalHolidays';
 import { BRAZILIAN_STATES } from '../types';
 import { getNationalHolidays, getStateHolidays, BRAZILIAN_STATES_NAMES, type Holiday } from '../data/holidays';
 
@@ -61,6 +62,12 @@ export function HolidaysPage() {
     });
   }, [doctors]);
 
+  const municipalCities = useMemo(
+    () => doctorCities.filter(item => selectedStates.includes(item.state)).map(({ city, state }) => ({ city, state })),
+    [doctorCities, selectedStates]
+  );
+  const municipalHolidays = useMunicipalHolidays(municipalCities, year);
+
   const baseHolidays = useMemo(() => {
     const combined = [
       ...getNationalHolidays(year),
@@ -69,7 +76,9 @@ export function HolidaysPage() {
     const unique = new Map<string, Holiday>();
     for (const holiday of combined) {
       const key = `${holiday.date.getMonth()}-${holiday.date.getDate()}-${holiday.name}`;
-      if (!unique.has(key)) unique.set(key, holiday);
+      const existing = unique.get(key);
+      if (!existing) unique.set(key, { ...holiday, states: [...(holiday.states ?? [])] });
+      else existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
     }
     return [...unique.values()];
   }, [year, selectedStates]);
@@ -86,8 +95,30 @@ export function HolidaysPage() {
       city: lh.city,
       states: lh.state ? [lh.state] : undefined,
     }));
-    return [...baseHolidays, ...locals].sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [baseHolidays, localHolidays, selectedStates, year]);
+    const automaticMunicipals: Holiday[] = municipalHolidays.map(holiday => {
+      const [holidayYear, month, day] = holiday.date.split('-').map(Number);
+      return {
+        date: new Date(holidayYear, month - 1, day),
+        name: holiday.name,
+        type: 'local' as const,
+        city: holiday.city,
+        states: [holiday.state],
+      };
+    });
+    const unique = new Map<string, Holiday>();
+    for (const holiday of [...baseHolidays, ...automaticMunicipals, ...locals]) {
+      const key = `${holiday.date.getMonth()}-${holiday.date.getDate()}-${holiday.name}`;
+      const existing = unique.get(key);
+      if (!existing) unique.set(key, { ...holiday, states: [...(holiday.states ?? [])] });
+      else {
+        existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
+        if (holiday.city && existing.city !== holiday.city) {
+          existing.city = [existing.city, holiday.city].filter(Boolean).join(', ');
+        }
+      }
+    }
+    return [...unique.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [baseHolidays, localHolidays, municipalHolidays, selectedStates, year]);
 
   async function toggleWorkingState(state: string) {
     const next = selectedStates.includes(state)
@@ -142,6 +173,7 @@ export function HolidaysPage() {
   }
 
   function localBadgeLabel(h: Holiday) {
+    if ((h.states?.length ?? 0) > 1) return h.states!.join('/');
     if (h.city && h.states?.[0]) return `${h.city}/${h.states[0]}`;
     if (h.city) return h.city;
     if (h.states?.[0]) return h.states[0];

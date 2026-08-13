@@ -15,6 +15,7 @@ import type { ScheduledVisit, VisitStatus } from '../types';
 import { getBirthdaysThisMonth, getBirthdaysThisWeek, getBirthdaysToday } from '../utils/birthday';
 import { useLocalHolidays } from '../hooks/useLocalHolidays';
 import { getNationalHolidays, getStateHolidays, type Holiday } from '../data/holidays';
+import { useMunicipalHolidays } from '../hooks/useMunicipalHolidays';
 
 const STATUS_STYLES: Record<VisitStatus, { label: string; className: string }> = {
   completed: { label: 'Concluída', className: 'bg-emerald-100 text-emerald-700' },
@@ -63,6 +64,16 @@ export function Dashboard() {
   const birthdaysThisMonth = getBirthdaysThisMonth(doctors, today);
   const displayedBirthdays = birthdayView === 'week' ? birthdaysThisWeek : birthdaysThisMonth;
   const workingStates = settings?.workingStates ?? [];
+  const municipalCities = useMemo(() => {
+    const unique = new Map<string, { city: string; state: string }>();
+    for (const doctor of doctors) {
+      if (!workingStates.includes(doctor.address.state) || !doctor.address.city) continue;
+      unique.set(`${doctor.address.city}|${doctor.address.state}`, { city: doctor.address.city, state: doctor.address.state });
+    }
+    return [...unique.values()];
+  }, [doctors, workingStates]);
+  const municipalThisYear = useMunicipalHolidays(municipalCities, today.getFullYear());
+  const municipalNextYear = useMunicipalHolidays(municipalCities, today.getFullYear() + 1);
 
   const dashboardHolidays = useMemo(() => {
     const years = [today.getFullYear(), today.getFullYear() + 1];
@@ -80,13 +91,25 @@ export function Dashboard() {
           states: holiday.state ? [holiday.state] : undefined,
         })),
     ]);
+    for (const holiday of [...municipalThisYear, ...municipalNextYear]) {
+      const [holidayYear, month, day] = holiday.date.split('-').map(Number);
+      combined.push({
+        date: new Date(holidayYear, month - 1, day),
+        name: holiday.name,
+        type: 'local',
+        city: holiday.city,
+        states: [holiday.state],
+      });
+    }
     const unique = new Map<string, Holiday>();
     for (const holiday of combined) {
       const key = `${format(holiday.date, 'yyyy-MM-dd')}|${holiday.name}`;
-      if (!unique.has(key)) unique.set(key, holiday);
+      const existing = unique.get(key);
+      if (!existing) unique.set(key, { ...holiday, states: [...(holiday.states ?? [])] });
+      else existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
     }
     return [...unique.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [localHolidays, today.getFullYear(), workingStates]);
+  }, [localHolidays, municipalNextYear, municipalThisYear, today.getFullYear(), workingStates]);
 
   const currentWeekRange = { start: startOfWeek(today, { weekStartsOn: 1 }), end: endOfWeek(today, { weekStartsOn: 1 }) };
   const holidaysThisWeek = dashboardHolidays.filter(holiday => isWithinInterval(holiday.date, currentWeekRange));
@@ -262,7 +285,10 @@ export function Dashboard() {
                 {holidaysThisWeek.map(holiday => (
                   <div key={`${holiday.date.toISOString()}-${holiday.name}`} className="rounded-lg bg-amber-50 px-2.5 py-1.5">
                     <p className="truncate text-xs font-semibold text-amber-900">{holiday.name}</p>
-                    <p className="text-[10px] capitalize text-amber-700">{format(holiday.date, "EEE, d/MM", { locale: ptBR })}</p>
+                    <p className="text-[10px] capitalize text-amber-700">
+                      {format(holiday.date, "EEE, d/MM", { locale: ptBR })}
+                      {holiday.type !== 'national' && holiday.states?.length ? ` · ${holiday.states.join('/')}` : ''}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -274,7 +300,8 @@ export function Dashboard() {
               {upcomingHolidays.map(holiday => (
                 <div key={`${holiday.date.toISOString()}-${holiday.name}`} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-50">
                   <span className="w-10 shrink-0 text-[11px] font-bold text-blue-600">{format(holiday.date, 'd/MM')}</span>
-                  <p className="truncate text-xs text-slate-700">{holiday.name}</p>
+                  <p className="min-w-0 flex-1 truncate text-xs text-slate-700">{holiday.name}</p>
+                  {holiday.type !== 'national' && holiday.states?.length ? <span className="shrink-0 text-[9px] font-semibold text-purple-600">{holiday.states.join('/')}</span> : null}
                 </div>
               ))}
               {upcomingHolidays.length === 0 && <p className="text-xs text-slate-400">Nenhum próximo feriado.</p>}
