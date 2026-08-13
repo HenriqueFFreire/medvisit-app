@@ -350,7 +350,54 @@ export function useRoutes(): UseRoutesResult {
     };
 
     if (data.perDateAssignment && data.perDateAssignment.length > 0) {
-      const sorted = [...data.perDateAssignment].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+      const sorted = data.perDateAssignment
+        .map(day => ({
+          ...day,
+          panelDoctorIds: [...day.panelDoctorIds],
+          suggestionDoctorIds: [...day.suggestionDoctorIds],
+          morningDoctorIds: [...(day.morningDoctorIds ?? [])],
+          afternoonDoctorIds: [...(day.afternoonDoctorIds ?? [])],
+        }))
+        .sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+
+      // Final safeguard: the preview can become stale after a doctor's hours are
+      // edited. Never persist a doctor on a weekday where no period is selected;
+      // move them to the first planned date on which they actually attend.
+      for (const sourceDay of sorted) {
+        const sourceDow = new Date(sourceDay.dateStr + 'T12:00:00').getDay();
+        const assignments = [
+          ...sourceDay.panelDoctorIds.map(id => ({ id, type: 'panel' as const })),
+          ...sourceDay.suggestionDoctorIds.map(id => ({ id, type: 'suggestion' as const })),
+        ];
+        for (const assignment of assignments) {
+          const doctor = allDoctors.find(d => d.id === assignment.id);
+          if (!doctor) continue;
+          const hasConfiguredPeriod = doctor.workingHours.some(wh => wh.period != null);
+          const isAvailable = !hasConfiguredPeriod || doctor.workingHours.some(wh => wh.dayOfWeek === sourceDow && wh.period != null);
+          if (isAvailable) continue;
+
+          const targetDay = sorted.find(day => {
+            const targetDow = new Date(day.dateStr + 'T12:00:00').getDay();
+            return doctor.workingHours.some(wh => wh.dayOfWeek === targetDow && wh.period != null);
+          });
+          if (!targetDay) continue;
+
+          sourceDay.panelDoctorIds = sourceDay.panelDoctorIds.filter(id => id !== doctor.id);
+          sourceDay.suggestionDoctorIds = sourceDay.suggestionDoctorIds.filter(id => id !== doctor.id);
+          sourceDay.morningDoctorIds = sourceDay.morningDoctorIds.filter(id => id !== doctor.id);
+          sourceDay.afternoonDoctorIds = sourceDay.afternoonDoctorIds.filter(id => id !== doctor.id);
+
+          const targetDow = new Date(targetDay.dateStr + 'T12:00:00').getDay();
+          const targetHours = doctor.workingHours.find(wh => wh.dayOfWeek === targetDow && wh.period != null);
+          const targetList = assignment.type === 'panel' ? targetDay.panelDoctorIds : targetDay.suggestionDoctorIds;
+          if (!targetList.includes(doctor.id)) targetList.push(doctor.id);
+          if (targetHours?.period === 'T' || (targetHours?.period === 'AG' && (targetHours.specificTime ?? '') >= '12:00')) {
+            targetDay.afternoonDoctorIds.push(doctor.id);
+          } else {
+            targetDay.morningDoctorIds.push(doctor.id);
+          }
+        }
+      }
       routeStart = new Date(sorted[0].dateStr + 'T12:00:00');
       routeEnd = new Date(sorted[sorted.length - 1].dateStr + 'T12:00:00');
 
