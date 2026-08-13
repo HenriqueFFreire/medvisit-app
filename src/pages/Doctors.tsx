@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Search, Plus, Upload, Download, Map, List, Filter, ArrowLeft, Trash2, Edit, MapPin, Clock, FileText, Users, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Upload, Download, Filter, ArrowLeft, Trash2, Edit, MapPin, Clock, FileText, Users, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import { useDoctors } from '../hooks/useDoctors';
 import { useVisits } from '../hooks/useVisits';
 import { useApp } from '../contexts/AppContext';
-import { DoctorCard, isVisitedThisMonth } from '../components/doctors/DoctorCard';
+import { DoctorCard } from '../components/doctors/DoctorCard';
+import { isVisitedThisMonth } from '../utils/visitCycle';
 import { DoctorForm, type DoctorFormData } from '../components/doctors/DoctorForm';
-import { DoctorMap } from '../components/maps/DoctorMap';
 import { Modal } from '../components/common/Modal';
 import { PageLoading } from '../components/common/Loading';
 import { EmptyState } from '../components/common/EmptyState';
@@ -34,7 +34,6 @@ export function DoctorsPage() {
   const { settings } = useApp();
   const cycleDay = settings?.cycleStartDay ?? 1;
 
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [specialtyFilters, setSpecialtyFilters] = useState<string[]>([]);
   const [filterDays, setFilterDays] = useState<number[]>([]);
@@ -187,7 +186,7 @@ export function DoctorsPage() {
       navigate('/doctors');
     } catch (err) {
       console.error('Erro ao excluir médico:', err);
-      alert('Erro ao excluir médico. Tente novamente.');
+      alert(err instanceof Error ? err.message : 'Erro ao excluir médico. Tente novamente.');
     } finally {
       setIsDeleting(false);
     }
@@ -372,15 +371,6 @@ export function DoctorsPage() {
             </div>
           </div>
 
-          {selectedDoctor.coordinates && (
-            <div className="card p-0 overflow-hidden">
-              <DoctorMap
-                doctors={[selectedDoctor]}
-                height="200px"
-              />
-            </div>
-          )}
-
           {selectedDoctor.notes && (
             <div className="card">
               <h3 className="font-medium text-gray-900 mb-2 flex items-center">
@@ -537,28 +527,9 @@ export function DoctorsPage() {
           />
         </div>
 
-        {/* View Toggle & Filter */}
+        {/* Filters */}
         <div className="flex items-center justify-between mt-3">
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-            <button
-              onClick={() => setViewMode('list')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'
-              }`}
-            >
-              <List className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('map')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'map' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'
-              }`}
-            >
-              <Map className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="flex gap-2">
+          <div className="flex gap-2 ml-auto">
             <button
               onClick={() => setOnlyUnvisited(v => !v)}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -613,7 +584,7 @@ export function DoctorsPage() {
               )
             }
           />
-        ) : viewMode === 'list' ? (
+        ) : (
           <div className="space-y-3">
             {filteredDoctors.map(doctor => (
               <DoctorCard
@@ -624,12 +595,6 @@ export function DoctorsPage() {
               />
             ))}
           </div>
-        ) : (
-          <DoctorMap
-            doctors={filteredDoctors}
-            height="calc(100vh - 250px)"
-            onDoctorClick={doctor => navigate(`/doctors/${doctor.id}`)}
-          />
         )}
       </div>
 

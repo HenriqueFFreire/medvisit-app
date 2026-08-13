@@ -58,10 +58,3 @@
     @apply text-blue-600;
   }
 }
-
-/* Leaflet map container */
-.leaflet-container {
-  height: 100%;
-  width: 100%;
-  border-radius: 0.5rem;
-}
