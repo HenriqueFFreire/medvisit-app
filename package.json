@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run src",
     "backfill:categories": "node scripts/populate_doctor_category.js",
+    "backfill:directory": "node scripts/backfill_doctor_directory.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

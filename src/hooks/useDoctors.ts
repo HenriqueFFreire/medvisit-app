@@ -107,6 +107,22 @@ function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
   };
 }
 
+async function syncDoctorsWithDirectory(userId: string, doctors: Doctor[]): Promise<void> {
+  const results = await Promise.allSettled(doctors.map(doctor => publishDirectoryDoctor({
+    userId,
+    sourceDoctorId: doctor.id,
+    name: doctor.name,
+    crm: doctor.crm,
+    specialty: doctor.specialty,
+    city: doctor.address.city,
+    state: doctor.address.state
+  })));
+  const failures = results.filter(result => result.status === 'rejected');
+  if (failures.length > 0) {
+    console.error(`Não foi possível sincronizar ${failures.length} CRM(s) com o Diretório MedVisit.`);
+  }
+}
+
 export function useDoctors(): UseDoctorsResult {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -131,7 +147,9 @@ export function useDoctors(): UseDoctorsResult {
       setIsLoading(true);
       const q = query(collection(db, 'users', user.id, 'doctors'), orderBy('name'));
       const snap = await withTimeout(getDocs(q));
-      setDoctors(snap.docs.map(d => mapDocToDoctor(d.id, d.data() as Record<string, unknown>)));
+      const loadedDoctors = snap.docs.map(d => mapDocToDoctor(d.id, d.data() as Record<string, unknown>));
+      setDoctors(loadedDoctors);
+      void syncDoctorsWithDirectory(user.id, loadedDoctors);
       setError(null);
     } catch (err) {
       setError('Erro ao carregar médicos');
