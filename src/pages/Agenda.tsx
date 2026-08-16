@@ -11,7 +11,6 @@ import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { useRoutes } from '../hooks/useRoutes';
 import { useAgenda } from '../hooks/useAgenda';
-import { useDoctors } from '../hooks/useDoctors';
 import { useApp } from '../contexts/AppContext';
 import { getCycleRange } from '../utils/visitCycle';
 import { PageLoading } from '../components/common/Loading';
@@ -43,7 +42,6 @@ export function AgendaPage() {
 
   const { getDailySchedule, routes, updateScheduledVisit, moveVisitToDay } = useRoutes();
   const { monthSchedules, loadMonth, isLoading } = useAgenda();
-  const { markVisited } = useDoctors();
   const { settings } = useApp();
   const cycleRange = useMemo(() => getCycleRange(new Date(), settings?.cycleStartDay ?? 1), [settings?.cycleStartDay]);
 
@@ -101,16 +99,9 @@ export function AgendaPage() {
     loadDaySchedule(date);
   };
 
-  const handleUpdateVisit = useCallback(async (visitId: string, status: VisitStatus, doctorId?: string) => {
+  const handleUpdateVisit = useCallback(async (visitId: string, status: VisitStatus) => {
     await updateScheduledVisit(visitId, { status });
-    if (status === 'completed' && doctorId) {
-      try {
-        await markVisited(doctorId);
-      } catch (error) {
-        console.error('A visita foi atualizada, mas o médico não foi marcado como visitado:', error);
-      }
-    }
-  }, [updateScheduledVisit, markVisited]);
+  }, [updateScheduledVisit]);
 
   const handleMoveVisit = useCallback(async (visitId: string, targetDateStr: string, targetShift: 'morning' | 'afternoon') => {
     await moveVisitToDay(visitId, targetDateStr, targetShift);

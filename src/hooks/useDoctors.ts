@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc,
+  collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc, writeBatch,
   query, orderBy, where, limit
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -123,6 +123,43 @@ async function syncDoctorsWithDirectory(userId: string, doctors: Doctor[]): Prom
   }
 }
 
+async function backfillLegacyVisitHistory(userId: string, doctors: Doctor[]): Promise<void> {
+  const markerRef = doc(db, 'users', userId, 'migrations', 'visit-history-v1');
+  if ((await getDoc(markerRef)).exists()) return;
+
+  const visitsSnap = await getDocs(collection(db, 'users', userId, 'visits'));
+  const existingCompletedVisits = new Set(visitsSnap.docs
+    .filter(visit => visit.data().status === 'completed')
+    .map(visit => `${visit.data().doctorId}|${visit.data().date}`));
+  const batch = writeBatch(db);
+  let created = 0;
+
+  for (const doctor of doctors) {
+    if (!doctor.lastVisitDate) continue;
+    const date = toLocalDateString(new Date(doctor.lastVisitDate));
+    if (existingCompletedVisits.has(`${doctor.id}|${date}`)) continue;
+    const timestamp = `${date}T12:00:00.000Z`;
+    batch.set(doc(db, 'users', userId, 'visits', `legacy-${doctor.id}-${date}`), {
+      doctorId: doctor.id,
+      scheduledVisitId: null,
+      date,
+      startTime: '',
+      endTime: null,
+      status: 'completed',
+      reason: null,
+      notes: 'Histórico recuperado da visita confirmada.',
+      productsPresented: [],
+      samplesDelivered: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    created++;
+  }
+
+  batch.set(markerRef, { completedAt: new Date().toISOString(), created });
+  await batch.commit();
+}
+
 export function useDoctors(): UseDoctorsResult {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -150,6 +187,9 @@ export function useDoctors(): UseDoctorsResult {
       const loadedDoctors = snap.docs.map(d => mapDocToDoctor(d.id, d.data() as Record<string, unknown>));
       setDoctors(loadedDoctors);
       void syncDoctorsWithDirectory(user.id, loadedDoctors);
+      void backfillLegacyVisitHistory(user.id, loadedDoctors).catch(error => {
+        console.error('Não foi possível recuperar o histórico de visitas anterior:', error);
+      });
       setError(null);
     } catch (err) {
       setError('Erro ao carregar médicos');
@@ -457,20 +497,32 @@ export function useDoctors(): UseDoctorsResult {
 
   const markVisited = async (id: string): Promise<void> => {
     if (!user) throw new Error('Usuário não autenticado');
-    const doctor = doctors.find(d => d.id === id);
     const now = new Date();
-    const alreadyVisited = doctor?.lastVisitDate &&
-      new Date(doctor.lastVisitDate).getFullYear() === now.getFullYear() &&
-      new Date(doctor.lastVisitDate).getMonth() === now.getMonth();
-
-    const newValue = alreadyVisited ? null : toLocalDateString(now);
-    await updateDoc(doc(db, 'users', user.id, 'doctors', id), {
-      lastVisitDate: newValue,
-      updatedAt: now.toISOString()
+    const dateStr = toLocalDateString(now);
+    const nowIso = now.toISOString();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'users', user.id, 'doctors', id), {
+      lastVisitDate: dateStr,
+      updatedAt: nowIso
     });
+    batch.set(doc(db, 'users', user.id, 'visits', `manual-${id}-${dateStr}`), {
+      doctorId: id,
+      scheduledVisitId: null,
+      date: dateStr,
+      startTime: now.toTimeString().slice(0, 5),
+      endTime: null,
+      status: 'completed',
+      reason: null,
+      notes: 'Visita confirmada manualmente.',
+      productsPresented: [],
+      samplesDelivered: [],
+      createdAt: nowIso,
+      updatedAt: nowIso
+    }, { merge: true });
+    await batch.commit();
     setDoctors(prev =>
       prev.map(d => d.id === id
-        ? { ...d, lastVisitDate: newValue ? new Date(newValue + 'T12:00:00') : undefined }
+        ? { ...d, lastVisitDate: new Date(dateStr + 'T12:00:00') }
         : d
       )
     );

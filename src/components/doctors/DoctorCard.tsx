@@ -113,13 +113,14 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
       {onMarkVisited && (
         <button
           onClick={onMarkVisited}
+          disabled={visitedThisMonth}
           className={`mt-3 w-full text-xs rounded-lg py-1.5 font-medium border transition-colors ${
             visitedThisMonth
-              ? 'text-gray-600 bg-gray-50 hover:bg-red-50 hover:text-red-600 border-gray-200 hover:border-red-200'
+              ? 'text-green-700 bg-green-50 border-green-200 cursor-default'
               : 'text-green-700 bg-green-50 hover:bg-green-100 border-green-200'
           }`}
         >
-          {visitedThisMonth ? 'Desmarcar visita' : 'Confirmar visita este mês'}
+          {visitedThisMonth ? 'Visita confirmada' : 'Confirmar visita este mês'}
         </button>
       )}
     </div>

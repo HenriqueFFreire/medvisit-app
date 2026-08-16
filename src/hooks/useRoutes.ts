@@ -633,6 +633,7 @@ export function useRoutes(): UseRoutesResult {
   const updateRoute = async (id: string, data: Partial<Route>): Promise<void> => {
     if (!user) throw new Error('Usuário não autenticado');
     const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    if (data.name !== undefined) updates.name = data.name.trim() || null;
     if (data.status !== undefined) updates.status = data.status;
     if (data.visitsPerDay !== undefined) updates.visitsPerDay = data.visitsPerDay;
     if (data.visitDuration !== undefined) updates.visitDuration = data.visitDuration;
@@ -750,7 +751,63 @@ export function useRoutes(): UseRoutesResult {
     if (updates.rescheduledToId !== undefined) row.rescheduledToId = updates.rescheduledToId;
     if (updates.rescheduledFromId !== undefined) row.rescheduledFromId = updates.rescheduledFromId;
     if (updates.rescheduledFromDate !== undefined) row.rescheduledFromDate = toLocalDateString(updates.rescheduledFromDate as Date);
-    await updateDoc(doc(db, 'users', user.id, 'scheduled_visits', visitId), row);
+    const scheduledVisitRef = doc(db, 'users', user.id, 'scheduled_visits', visitId);
+    const scheduledVisitSnap = await getDoc(scheduledVisitRef);
+    const scheduledVisitData = scheduledVisitSnap.data() as Record<string, unknown> | undefined;
+    const doctorId = scheduledVisitData?.doctorId as string | undefined;
+    const scheduleId = scheduledVisitData?.dailyScheduleId as string | undefined;
+    const finalStatus = updates.status;
+
+    if (doctorId && scheduleId && finalStatus && ['completed', 'not_done'].includes(finalStatus)) {
+      const scheduleSnap = await getDoc(doc(db, 'users', user.id, 'daily_schedules', scheduleId));
+      const visitDate = String(scheduleSnap.data()?.date ?? toLocalDateString(new Date()));
+      const now = new Date().toISOString();
+      const historyRef = doc(db, 'users', user.id, 'visits', `scheduled-${visitId}`);
+      const batch = writeBatch(db);
+      batch.update(scheduledVisitRef, row);
+      batch.set(historyRef, {
+        doctorId,
+        scheduledVisitId: visitId,
+        date: visitDate,
+        startTime: String(scheduledVisitData?.scheduledTime ?? ''),
+        endTime: updates.actualEndTime ?? null,
+        status: finalStatus,
+        reason: null,
+        notes: null,
+        productsPresented: [],
+        samplesDelivered: [],
+        createdAt: now,
+        updatedAt: now
+      }, { merge: true });
+      if (finalStatus === 'completed') {
+        batch.update(doc(db, 'users', user.id, 'doctors', doctorId), {
+          lastVisitDate: visitDate,
+          updatedAt: now
+        });
+      }
+      await batch.commit();
+    } else if (doctorId && finalStatus === 'pending') {
+      const now = new Date().toISOString();
+      const historyRef = doc(db, 'users', user.id, 'visits', `scheduled-${visitId}`);
+      const otherVisitsSnap = await getDocs(query(
+        collection(db, 'users', user.id, 'visits'),
+        where('doctorId', '==', doctorId)
+      ));
+      const latestCompletedDate = otherVisitsSnap.docs
+        .filter(visit => visit.id !== historyRef.id && visit.data().status === 'completed')
+        .map(visit => String(visit.data().date ?? ''))
+        .sort((a, b) => b.localeCompare(a))[0] || null;
+      const batch = writeBatch(db);
+      batch.update(scheduledVisitRef, row);
+      batch.delete(historyRef);
+      batch.update(doc(db, 'users', user.id, 'doctors', doctorId), {
+        lastVisitDate: latestCompletedDate,
+        updatedAt: now
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(scheduledVisitRef, row);
+    }
     await loadRoutes();
   };
 

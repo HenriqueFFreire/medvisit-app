@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Calendar, ChevronDown, ChevronRight, ChevronLeft, MapPin, AlertCircle, Trash2, CheckCircle2, Copy, Users, GripVertical, Pill } from 'lucide-react';
+import { Plus, Calendar, ChevronDown, ChevronRight, ChevronLeft, MapPin, AlertCircle, Trash2, CheckCircle2, Copy, Users, GripVertical, Pill, Pencil } from 'lucide-react';
 import {
   DndContext, DragOverlay,
   useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors,
@@ -42,7 +42,7 @@ function getDoctorPreviewShift(doctor: Doctor, dayOfWeek: number): PreviewShift 
 
 
 export function RoutesPage() {
-  const { routes, createRoute, deleteRoute, duplicateRoute, isLoading: loadingRoutes, refreshRoutes, getRouteSchedules } = useRoutes();
+  const { routes, createRoute, updateRoute, deleteRoute, duplicateRoute, isLoading: loadingRoutes, refreshRoutes, getRouteSchedules } = useRoutes();
   const { doctors, isLoading: loadingDoctors } = useDoctors();
   const { pharmacies, isLoading: loadingPharmacies } = usePharmacies();
   const { settings } = useApp();
@@ -103,6 +103,9 @@ export function RoutesPage() {
   const [routeToManage, setRouteToManage] = useState<import('../types').Route | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
   const [duplicateTargetWeek, setDuplicateTargetWeek] = useState(format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 7), 'yyyy-MM-dd'));
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -125,7 +128,7 @@ export function RoutesPage() {
 
   // Doctor filter state
   const [filterState, setFilterState] = useState('');
-  const [filterCity, setFilterCity] = useState('');
+  const [filterCities, setFilterCities] = useState<string[]>([]);
   const [onlyUnvisitedModal, setOnlyUnvisitedModal] = useState(false);
   const [lockedState, setLockedState] = useState<string>(''); // state locked after first doctor selection
 
@@ -325,11 +328,11 @@ export function RoutesPage() {
   const filteredDoctors = useMemo(() =>
     doctors.filter(d =>
       (!filterState || d.address.state === filterState) &&
-      (!filterCity || d.address.city === filterCity) &&
+      (filterCities.length === 0 || filterCities.includes(d.address.city)) &&
       (!onlyUnvisitedModal || !isVisitedThisMonth(d, settings?.cycleStartDay ?? 1)) &&
       (!lockedState || d.address.state === lockedState)
     ),
-    [doctors, filterState, filterCity, onlyUnvisitedModal, lockedState, settings?.cycleStartDay]
+    [doctors, filterState, filterCities, onlyUnvisitedModal, lockedState, settings?.cycleStartDay]
   );
 
   // Doctors with no route this month (must be before early return — Rules of Hooks)
@@ -428,6 +431,17 @@ export function RoutesPage() {
       setShowDeleteConfirm(false);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleRenameRoute = async () => {
+    if (!routeToManage) return;
+    setIsRenaming(true);
+    try {
+      await updateRoute(routeToManage.id, { name: renameValue.trim() });
+      setShowRenameModal(false);
+    } finally {
+      setIsRenaming(false);
     }
   };
 
@@ -767,6 +781,19 @@ export function RoutesPage() {
                 {/* Actions */}
                 <div className="flex border-t border-gray-50">
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRouteToManage(route);
+                      setRenameValue(route.name ?? '');
+                      setShowRenameModal(true);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    Renomear
+                  </button>
+                  <div className="w-px bg-gray-100" />
+                  <button
                     onClick={(e) => { e.stopPropagation(); setRouteToManage(route); setShowDuplicateModal(true); }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm text-blue-600 hover:bg-blue-50 transition-colors font-medium"
                   >
@@ -803,6 +830,8 @@ export function RoutesPage() {
           setIncludePharmacies(false);
           setCreateError('');
           setOnlyUnvisitedModal(false);
+          setFilterState('');
+          setFilterCities([]);
           setLockedState('');
           setSelectedDays([1, 2, 3, 4, 5]);
           setSelectedWeeks([1, 2, 3, 4, 5]);
@@ -1228,13 +1257,13 @@ export function RoutesPage() {
               </button>
 
               {/* Filters */}
-              <div className="grid grid-cols-2 gap-2 mb-3">
+              <div className="space-y-2 mb-3">
                 <div>
                   <label className="label text-xs">Filtrar por estado</label>
                   <select
                     className="input text-sm"
                     value={filterState}
-                    onChange={e => { setFilterState(e.target.value); setFilterCity(''); }}
+                    onChange={e => { setFilterState(e.target.value); setFilterCities([]); }}
                   >
                     <option value="">Todos os estados</option>
                     {availableStates.map(s => (
@@ -1243,17 +1272,38 @@ export function RoutesPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="label text-xs">Filtrar por cidade</label>
-                  <select
-                    className="input text-sm"
-                    value={filterCity}
-                    onChange={e => setFilterCity(e.target.value)}
-                  >
-                    <option value="">Todas as cidades</option>
-                    {availableCities.map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between">
+                    <label className="label text-xs mb-1">Filtrar por cidades</label>
+                    {filterCities.length > 0 && (
+                      <button type="button" onClick={() => setFilterCities([])} className="text-xs text-blue-600 hover:text-blue-700">
+                        Todas
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                    {availableCities.map(city => {
+                      const selected = filterCities.includes(city);
+                      return (
+                        <button
+                          key={city}
+                          type="button"
+                          onClick={() => setFilterCities(previous => selected
+                            ? previous.filter(item => item !== city)
+                            : [...previous, city])}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${selected
+                            ? 'border-blue-600 bg-blue-600 text-white'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}`}
+                        >
+                          {city}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-[10px] text-gray-400">
+                    {filterCities.length > 0
+                      ? `${filterCities.length} cidade${filterCities.length > 1 ? 's' : ''} selecionada${filterCities.length > 1 ? 's' : ''}`
+                      : 'Todas as cidades estão incluídas.'}
+                  </p>
                 </div>
               </div>
 
@@ -1824,6 +1874,37 @@ export function RoutesPage() {
               className="flex-1 py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-medium rounded-xl transition-colors disabled:opacity-50"
             >
               {isDeleting ? 'Apagando...' : 'Apagar'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Rename Route Modal */}
+      <Modal
+        isOpen={showRenameModal}
+        onClose={() => setShowRenameModal(false)}
+        title="Renomear roteiro"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="label">Nome do roteiro</label>
+            <input
+              type="text"
+              className="input"
+              value={renameValue}
+              onChange={event => setRenameValue(event.target.value)}
+              placeholder="Ex.: Zona Sul — Semana 2"
+              maxLength={60}
+              autoFocus
+            />
+            <p className="mt-1 text-xs text-gray-500">Deixe em branco para voltar a exibir somente o período.</p>
+          </div>
+          <div className="flex gap-3">
+            <button type="button" onClick={() => setShowRenameModal(false)} className="btn-secondary flex-1">
+              Cancelar
+            </button>
+            <button type="button" onClick={handleRenameRoute} disabled={isRenaming} className="btn-primary flex-1">
+              {isRenaming ? 'Salvando...' : 'Salvar nome'}
             </button>
           </div>
         </div>
