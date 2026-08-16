@@ -29,12 +29,12 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
 
   return (
     <div
-      className={`rounded-xl shadow-sm border p-4 hover:shadow-md transition-shadow cursor-pointer ${
+      className={`relative rounded-xl shadow-sm border p-4 hover:shadow-md transition-shadow cursor-pointer ${
         noPainel ? 'bg-orange-50 border-orange-200' : 'bg-white border-gray-100'
       }`}
       onClick={onClick}
     >
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between md:pr-[40%]">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-gray-900 truncate">{doctor.name}</h3>
@@ -64,7 +64,7 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
         {onClick && <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0 ml-2" />}
       </div>
 
-      <div className="mt-3 space-y-1.5">
+      <div className="mt-3 space-y-1.5 md:pr-[40%]">
         <div className="flex items-center text-sm text-gray-600">
           <MapPin className="w-4 h-4 mr-2 text-gray-400" />
           <span className="truncate">{formatShortAddress(getDoctorPrimaryAddress(doctor))}</span>
@@ -78,9 +78,12 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
         )}
 
         {attendanceGroups.length > 0 && (
-          <div className="flex items-start text-sm text-gray-600">
-            <Clock className="w-4 h-4 mr-2 mt-0.5 text-gray-400 shrink-0" />
-            <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-gray-100 bg-gray-50">
+          <div className="flex items-start text-sm text-gray-600 md:absolute md:right-10 md:top-4 md:w-[36%]">
+            <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+              <div className="flex items-center gap-1.5 border-b border-gray-200 bg-gray-100 px-2.5 py-1.5">
+                <Clock className="h-3.5 w-3.5 text-blue-600" />
+                <span className="text-[11px] font-semibold text-gray-700">Horários de atendimento</span>
+              </div>
               {attendanceGroups.map((group, groupIndex) => {
                 const days = group.items
                   .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
@@ -89,7 +92,7 @@ export function DoctorCard({ doctor, onClick, showLastVisit = true, onMarkVisite
                     : DAY_LABELS[hours.dayOfWeek])
                   .join(', ');
                 return (
-                  <div key={group.key} className={`grid grid-cols-[76px_1fr] gap-2 px-2.5 py-1 text-[11px] ${groupIndex > 0 ? 'border-t border-gray-100' : ''}`}>
+                  <div key={group.key} className={`grid grid-cols-[76px_1fr] gap-2 px-2.5 py-1.5 text-[11px] ${groupIndex > 0 ? 'border-t border-gray-200' : ''}`}>
                     <span className="font-semibold text-blue-700">{group.label}</span>
                     <span className="text-gray-600">{days}</span>
                   </div>

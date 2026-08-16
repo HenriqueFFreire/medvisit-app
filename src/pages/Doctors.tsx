@@ -314,6 +314,11 @@ export function DoctorsPage() {
                       <p className="text-sm font-semibold text-blue-900">
                         {addressEntry.isPrimary ? 'Endereço principal' : (addressEntry.label || `Endereço ${addressIndex + 1}`)}
                       </p>
+                      {addressEntry.address.attendanceLocation && (
+                        <p className="text-xs font-medium text-blue-800 mt-0.5">
+                          {addressEntry.address.attendanceLocation}
+                        </p>
+                      )}
                       <p className="text-xs text-blue-700 mt-0.5">
                         {addressEntry.address.street}, {addressEntry.address.number}
                         {addressEntry.address.complement ? `, ${addressEntry.address.complement}` : ''}

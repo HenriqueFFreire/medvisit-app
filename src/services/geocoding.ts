@@ -32,6 +32,16 @@ async function throttleRequest(): Promise<void> {
   lastRequestTime = Date.now();
 }
 
+async function fetchWithTimeout(input: RequestInfo, init?: RequestInit, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function geocodeAddress(address: Address): Promise<Coordinates | null> {
   await throttleRequest();
 
@@ -39,7 +49,7 @@ export async function geocodeAddress(address: Address): Promise<Coordinates | nu
   const query = encodeURIComponent(fullAddress + ', Brasil');
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${NOMINATIM_BASE_URL}/search?q=${query}&format=json&limit=1&countrycodes=br`,
       {
         headers: {
@@ -57,7 +67,7 @@ export async function geocodeAddress(address: Address): Promise<Coordinates | nu
     if (results.length === 0) {
       // Try with just city and state
       const fallbackQuery = encodeURIComponent(`${address.city}, ${address.state}, Brasil`);
-      const fallbackResponse = await fetch(
+      const fallbackResponse = await fetchWithTimeout(
         `${NOMINATIM_BASE_URL}/search?q=${fallbackQuery}&format=json&limit=1&countrycodes=br`,
         {
           headers: {
@@ -162,7 +172,7 @@ export async function getAddressFromCEP(cep: string): Promise<Partial<Address> |
   }
 
   try {
-    const response = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+    const response = await fetchWithTimeout(`https://viacep.com.br/ws/${cleanCep}/json/`);
 
     if (!response.ok) {
       throw new Error(`CEP lookup failed: ${response.status}`);

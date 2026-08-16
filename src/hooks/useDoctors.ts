@@ -51,6 +51,7 @@ function createPersistableAddress(address: Address): Address {
     city: address.city ?? '',
     state: address.state ?? '',
     zipCode: address.zipCode ?? '',
+    ...(address.attendanceLocation != null && address.attendanceLocation !== '' ? { attendanceLocation: address.attendanceLocation } : {}),
     ...(address.complement != null && address.complement !== '' ? { complement: address.complement } : {}),
     ...(address.fullAddress != null && address.fullAddress !== '' ? { fullAddress: address.fullAddress } : {})
   };
@@ -242,6 +243,7 @@ export function useDoctors(): UseDoctorsResult {
     }
 
     const primaryAddress = createPersistableAddress({
+      attendanceLocation: data.address?.attendanceLocation ?? existing.address.attendanceLocation,
       street: data.address?.street ?? existing.address.street,
       number: data.address?.number ?? existing.address.number,
       complement: data.address?.complement ?? existing.address.complement,

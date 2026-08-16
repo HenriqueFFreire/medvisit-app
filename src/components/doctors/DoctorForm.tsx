@@ -490,6 +490,32 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                 <p className="text-xs font-medium text-amber-700">{crmWarning}</p>
               </div>
             )}
+            {!doctor && isSearchingDirectory && (
+              <p className="text-sm text-gray-600 mt-2" role="status">
+                Consultando o Diretório MedVisit...
+              </p>
+            )}
+            {!doctor && directoryResult && (
+              <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <p className="text-sm font-semibold text-blue-900">{directoryResult.name}</p>
+                <p className="text-xs text-blue-700 mt-1">
+                  CRM {directoryResult.crm}
+                  {directoryResult.specialty ? ` • ${directoryResult.specialty}` : ''}
+                  {(directoryResult.city || directoryResult.state) ? ` • ${directoryResult.city}/${directoryResult.state}` : ''}
+                </p>
+                <button type="button" onClick={importDirectoryResult} className="btn-primary px-3 py-1.5 text-sm mt-3">
+                  Importar dados
+                </button>
+              </div>
+            )}
+            {!doctor && directoryMessage && (
+              <p
+                className={`text-sm mt-2 ${directoryMessage.startsWith('Dados') ? 'text-green-700' : 'text-gray-600'}`}
+                role="status"
+              >
+                {directoryMessage}
+              </p>
+            )}
           </div>
 
           <div>
@@ -532,27 +558,6 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
             {errors.email && <p className="text-sm text-red-500 mt-1">{errors.email}</p>}
           </div>
         </div>
-
-        {!doctor && directoryResult && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-blue-900">{directoryResult.name}</p>
-              <p className="text-xs text-blue-700 mt-1">
-                CRM {directoryResult.crm}
-                {directoryResult.specialty ? ` • ${directoryResult.specialty}` : ''}
-                {(directoryResult.city || directoryResult.state) ? ` • ${directoryResult.city}/${directoryResult.state}` : ''}
-              </p>
-            </div>
-            <button type="button" onClick={importDirectoryResult} className="btn-primary px-4 py-2 text-sm shrink-0">
-              Importar dados
-            </button>
-          </div>
-        )}
-        {!doctor && directoryMessage && (
-          <p className={`text-sm ${directoryMessage.startsWith('Dados') ? 'text-green-700' : 'text-gray-600'}`}>
-            {directoryMessage}
-          </p>
-        )}
 
         <div>
           <label className="label">Aniversário</label>
@@ -651,6 +656,17 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                       </button>
                     )}
                   </div>
+                </div>
+
+                <div>
+                  <label className="label">Local de atendimento</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={entry.address.attendanceLocation ?? ''}
+                    onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, attendanceLocation: e.target.value } })}
+                    placeholder="Ex.: Hospital Central, Clínica Vida"
+                  />
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
@@ -766,6 +782,11 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                     <p className="text-sm font-semibold text-blue-900">
                       {addressEntry.isPrimary ? 'Endereço principal' : (addressEntry.label || `Endereço ${addressIndex + 1}`)}
                     </p>
+                    {addressEntry.address.attendanceLocation && (
+                      <p className="text-xs font-medium text-blue-800 mt-0.5 truncate">
+                        {addressEntry.address.attendanceLocation}
+                      </p>
+                    )}
                     <p className="text-xs text-blue-700 mt-0.5 truncate" title={`${addressEntry.address.street}, ${addressEntry.address.number}`}>
                       {addressEntry.address.street}, {addressEntry.address.number}
                       {addressEntry.address.complement ? `, ${addressEntry.address.complement}` : ''}

@@ -329,7 +329,7 @@ export function RoutesPage() {
       (!onlyUnvisitedModal || !isVisitedThisMonth(d, settings?.cycleStartDay ?? 1)) &&
       (!lockedState || d.address.state === lockedState)
     ),
-    [doctors, filterState, filterCity, onlyUnvisitedModal, lockedState]
+    [doctors, filterState, filterCity, onlyUnvisitedModal, lockedState, settings?.cycleStartDay]
   );
 
   // Doctors with no route this month (must be before early return — Rules of Hooks)

@@ -50,7 +50,8 @@ export function Dashboard() {
   const { settings } = useApp();
   const { localHolidays } = useLocalHolidays();
   const cycleDay = settings?.cycleStartDay ?? 1;
-  const today = new Date();
+  const today = useMemo(() => new Date(), []);
+  const todayYear = today.getFullYear();
   const [birthdayView, setBirthdayView] = useState<'week' | 'month'>('week');
 
   const visitedCount = doctors.filter(doctor => isVisitedThisMonth(doctor, cycleDay)).length;
@@ -63,7 +64,7 @@ export function Dashboard() {
   const birthdaysThisWeek = getBirthdaysThisWeek(doctors, today);
   const birthdaysThisMonth = getBirthdaysThisMonth(doctors, today);
   const displayedBirthdays = birthdayView === 'week' ? birthdaysThisWeek : birthdaysThisMonth;
-  const workingStates = settings?.workingStates ?? [];
+  const workingStates = useMemo(() => settings?.workingStates ?? [], [settings?.workingStates]);
   const municipalCities = useMemo(() => {
     const unique = new Map<string, { city: string; state: string }>();
     for (const doctor of doctors) {
@@ -72,11 +73,11 @@ export function Dashboard() {
     }
     return [...unique.values()];
   }, [doctors, workingStates]);
-  const municipalThisYear = useMunicipalHolidays(municipalCities, today.getFullYear());
-  const municipalNextYear = useMunicipalHolidays(municipalCities, today.getFullYear() + 1);
+  const municipalThisYear = useMunicipalHolidays(municipalCities, todayYear);
+  const municipalNextYear = useMunicipalHolidays(municipalCities, todayYear + 1);
 
   const dashboardHolidays = useMemo(() => {
-    const years = [today.getFullYear(), today.getFullYear() + 1];
+    const years = [todayYear, todayYear + 1];
     const combined: Holiday[] = years.flatMap(year => [
       ...getNationalHolidays(year),
       ...workingStates.flatMap(state => getStateHolidays(year, state)),
@@ -109,7 +110,7 @@ export function Dashboard() {
       else existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
     }
     return [...unique.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [localHolidays, municipalNextYear, municipalThisYear, today.getFullYear(), workingStates]);
+  }, [localHolidays, municipalNextYear, municipalThisYear, todayYear, workingStates]);
 
   const currentWeekRange = { start: startOfWeek(today, { weekStartsOn: 1 }), end: endOfWeek(today, { weekStartsOn: 1 }) };
   const holidaysThisWeek = dashboardHolidays.filter(holiday => isWithinInterval(holiday.date, currentWeekRange));

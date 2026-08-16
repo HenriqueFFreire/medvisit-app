@@ -1,0 +1,11 @@
+.claude/
+.git/
+.github/
+.tmp-vercel-head/
+dist/
+docs/
+node_modules/
+scripts/
+tmp/
+tmp_check_*.py
+src/**/*.test.ts

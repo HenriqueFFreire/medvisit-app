@@ -41,12 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setFirebaseUser(fbUser);
-      if (fbUser) {
-        await loadUserProfile(fbUser);
-      } else {
+      try {
+        if (fbUser) {
+          await loadUserProfile(fbUser);
+        } else {
+          setUser(null);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar perfil do usuário:', error);
         setUser(null);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     });
     return unsubscribe;
   }, []);
@@ -100,6 +106,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Context hooks intentionally share the provider module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) throw new Error('useAuth must be used within an AuthProvider');

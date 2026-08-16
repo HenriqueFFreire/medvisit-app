@@ -90,6 +90,7 @@ export interface Pharmacy {
 }
 
 export interface Address {
+  attendanceLocation?: string;
   street: string;
   number: string;
   complement?: string;

@@ -327,7 +327,7 @@ export function parseExcelFile(file: File): Promise<ImportResult> {
               return;
             }
 
-            if (!estado || !BRAZILIAN_STATES.includes(estado as any)) {
+            if (!estado || !BRAZILIAN_STATES.includes(estado as (typeof BRAZILIAN_STATES)[number])) {
               errors.push({ row: rowNumber, message: 'Estado inválido' });
               return;
             }

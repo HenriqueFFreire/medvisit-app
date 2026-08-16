@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { Pharmacy, Address } from '../../types';
 import { BRAZILIAN_STATES } from '../../types';
@@ -15,7 +15,7 @@ interface PharmacyFormProps {
 }
 
 export function PharmacyForm({ pharmacy, onSubmit, onCancel, isLoading }: PharmacyFormProps) {
-  const [formData, setFormData] = useState<PharmacyInput>({
+  const defaultFormData = useMemo<PharmacyInput>(() => ({
     name: pharmacy?.name || '',
     phone: pharmacy?.phone || '',
     address: pharmacy?.address || {
@@ -28,7 +28,13 @@ export function PharmacyForm({ pharmacy, onSubmit, onCancel, isLoading }: Pharma
       zipCode: ''
     },
     notes: pharmacy?.notes || '',
-  });
+  }), [pharmacy]);
+
+  const [formData, setFormData] = useState<PharmacyInput>(defaultFormData);
+
+  useEffect(() => {
+    setFormData(defaultFormData);
+  }, [defaultFormData]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoadingCEP, setIsLoadingCEP] = useState(false);
@@ -61,7 +67,9 @@ export function PharmacyForm({ pharmacy, onSubmit, onCancel, isLoading }: Pharma
           }
         }));
       }
-    } catch {}
+    } catch (error) {
+      console.warn('Não foi possível preencher o endereço pelo CEP:', error);
+    }
     finally { setIsLoadingCEP(false); }
   };
 
@@ -75,7 +83,12 @@ export function PharmacyForm({ pharmacy, onSubmit, onCancel, isLoading }: Pharma
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    await onSubmit(formData);
+    try {
+      await onSubmit(formData);
+    } catch (err) {
+      console.error('Erro no submit do formulário de farmácia:', err);
+      alert(`Erro ao salvar farmácia: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   return (

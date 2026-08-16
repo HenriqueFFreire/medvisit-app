@@ -1065,7 +1065,7 @@ export function useRoutes(): UseRoutesResult {
 
     await batch.commit();
     await loadRoutes();
-  }, [user]);
+  }, [user, loadRoutes]);
 
   return {
     routes, currentRoute, todaySchedule, isLoading, error,

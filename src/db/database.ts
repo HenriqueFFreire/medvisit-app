@@ -1,3 +1,2 @@
-// This file is kept as a stub for backwards compatibility during migration.
-// All database operations now use Supabase directly.
+// Kept as a compatibility stub. Data access currently uses Firebase/Firestore.
 export {};

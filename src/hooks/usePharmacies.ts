@@ -63,7 +63,9 @@ export function usePharmacies(): UsePharmaciesResult {
     try {
       const coords = await geocodeAddress(data.address);
       if (coords) coordinates = coords;
-    } catch {}
+    } catch (error) {
+      console.warn('Não foi possível geocodificar a farmácia:', error);
+    }
 
     const docData = {
       name: data.name,
@@ -89,7 +91,9 @@ export function usePharmacies(): UsePharmaciesResult {
       try {
         const coords = await geocodeAddress(data.address);
         if (coords) updates.coordinates = coords;
-      } catch {}
+      } catch (error) {
+        console.warn('Não foi possível atualizar as coordenadas da farmácia:', error);
+      }
     }
 
     await updateDoc(doc(db, 'users', user.id, 'pharmacies', id), updates);

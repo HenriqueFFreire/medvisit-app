@@ -64,7 +64,6 @@ export function useMunicipalHolidays(cities: CityState[], year: number) {
       return { city, state };
     }) : [];
     if (uniqueCities.length === 0) {
-      setHolidays([]);
       return;
     }
     Promise.allSettled(uniqueCities.map(city => loadCityHolidays(city, year))).then(results => {
@@ -76,5 +75,5 @@ export function useMunicipalHolidays(cities: CityState[], year: number) {
     return () => { cancelled = true; };
   }, [cityKey, year]);
 
-  return holidays;
+  return cityKey ? holidays : [];
 }

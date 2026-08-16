@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Local comparison and diagnostic artifacts
+.tmp-vercel-head/
+tmp/
+tmp_check_*.py
