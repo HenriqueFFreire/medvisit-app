@@ -39,7 +39,6 @@ export function DoctorsPage() {
   const [filterDays, setFilterDays] = useState<number[]>([]);
   const [filterCities, setFilterCities] = useState<string[]>([]);
   const [filterNeighborhoods, setFilterNeighborhoods] = useState<string[]>([]);
-  const [filterComplements, setFilterComplements] = useState<string[]>([]);
   const [onlyUnvisited, setOnlyUnvisited] = useState(false);
   const [filteredDoctors, setFilteredDoctors] = useState<Doctor[]>(doctors);
   const [showForm, setShowForm] = useState(false);
@@ -80,14 +79,6 @@ export function DoctorsPage() {
     [doctors]
   );
 
-  const availableComplements = useMemo(() =>
-    Array.from(new Set(doctors.flatMap(d => {
-      const address = getDoctorPrimaryAddress(d);
-      return address.complement ? [address.complement] : [];
-    }))).sort(),
-    [doctors]
-  );
-
   const toggleValue = <T,>(values: T[], value: T) =>
     values.includes(value) ? values.filter(v => v !== value) : [...values, value];
 
@@ -121,19 +112,12 @@ export function DoctorsPage() {
       result = result.filter(d => filterNeighborhoods.includes(getDoctorPrimaryAddress(d).neighborhood));
     }
 
-    if (filterComplements.length > 0) {
-      result = result.filter(d => {
-        const address = getDoctorPrimaryAddress(d);
-        return address.complement ? filterComplements.includes(address.complement) : false;
-      });
-    }
-
     if (onlyUnvisited) {
       result = result.filter(d => !isVisitedThisMonth(d, cycleDay));
     }
 
     setFilteredDoctors(result);
-  }, [doctors, searchQuery, specialtyFilters, filterDays, filterCities, filterNeighborhoods, filterComplements, onlyUnvisited, cycleDay]);
+  }, [doctors, searchQuery, specialtyFilters, filterDays, filterCities, filterNeighborhoods, onlyUnvisited, cycleDay]);
 
   const handleAddDoctor = async (data: DoctorFormData) => {
     console.log('handleAddDoctor start', data);
@@ -548,14 +532,14 @@ export function DoctorsPage() {
             <button
               onClick={() => setShowFilterModal(true)}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm ${
-                specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || filterComplements.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
               }`}
             >
               <Filter className="w-4 h-4" />
               Filtrar
-              {(specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || filterComplements.length > 0) && (
+              {(specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0) && (
                 <span className="ml-1 bg-blue-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                  {specialtyFilters.length + filterDays.length + filterCities.length + filterNeighborhoods.length + filterComplements.length}
+                  {specialtyFilters.length + filterDays.length + filterCities.length + filterNeighborhoods.length}
                 </span>
               )}
             </button>
@@ -564,7 +548,7 @@ export function DoctorsPage() {
       </div>
 
       {/* Filter result count */}
-      {(searchQuery || specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || filterComplements.length > 0 || onlyUnvisited) && (
+      {(searchQuery || specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || onlyUnvisited) && (
         <div className="px-4 py-2 border-t border-gray-100 bg-blue-50">
           <span className="text-sm text-blue-700 font-medium">
             {filteredDoctors.length} médico{filteredDoctors.length !== 1 ? 's' : ''} encontrado{filteredDoctors.length !== 1 ? 's' : ''}
@@ -714,32 +698,6 @@ export function DoctorsPage() {
             </div>
           )}
 
-          {/* Complement */}
-          {availableComplements.length > 0 && (
-            <div>
-              <label className="label">Complemento</label>
-              <div className="flex flex-wrap gap-2">
-                {availableComplements.map(c => {
-                  const selected = filterComplements.includes(c);
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setFilterComplements(prev => toggleValue(prev, c))}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                        selected
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      {c}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           <div className="flex gap-3">
             <button
               onClick={() => {
@@ -747,7 +705,6 @@ export function DoctorsPage() {
                 setFilterDays([]);
                 setFilterCities([]);
                 setFilterNeighborhoods([]);
-                setFilterComplements([]);
                 setShowFilterModal(false);
               }}
               className="btn-secondary flex-1"

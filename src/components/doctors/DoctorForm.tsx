@@ -658,17 +658,6 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                   </div>
                 </div>
 
-                <div>
-                  <label className="label">Local de atendimento</label>
-                  <input
-                    type="text"
-                    className="input"
-                    value={entry.address.attendanceLocation ?? ''}
-                    onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, attendanceLocation: e.target.value } })}
-                    placeholder="Ex.: Hospital Central, Clínica Vida"
-                  />
-                </div>
-
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="label">CEP</label>
@@ -754,6 +743,17 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                     value={entry.address.complement ?? ''}
                     onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, complement: e.target.value } })}
                     placeholder="Sala 101"
+                  />
+                </div>
+
+                <div>
+                  <label className="label">Local de atendimento</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={entry.address.attendanceLocation ?? ''}
+                    onChange={e => updateAddressEntry(entry.id, { address: { ...entry.address, attendanceLocation: e.target.value } })}
+                    placeholder="Ex.: Hospital Central, Clínica Vida"
                   />
                 </div>
               </div>
