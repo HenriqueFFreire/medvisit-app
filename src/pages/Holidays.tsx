@@ -51,10 +51,15 @@ export function HolidaysPage() {
   const doctorCities = useMemo(() => {
     const map = new Map<string, { city: string; state: string; count: number }>();
     for (const d of doctors) {
-      const key = `${d.address.city}|${d.address.state}`;
-      const entry = map.get(key);
-      if (entry) entry.count++;
-      else map.set(key, { city: d.address.city, state: d.address.state, count: 1 });
+      const addresses = d.addresses?.length ? d.addresses.map(entry => entry.address) : [d.address];
+      const uniqueDoctorCities = new Map(addresses
+        .filter(address => address.city && address.state)
+        .map(address => [`${address.city}|${address.state}`, { city: address.city, state: address.state }]));
+      for (const [key, location] of uniqueDoctorCities) {
+        const entry = map.get(key);
+        if (entry) entry.count++;
+        else map.set(key, { ...location, count: 1 });
+      }
     }
     return [...map.values()].sort((a, b) => {
       if (a.state !== b.state) return a.state.localeCompare(b.state);
@@ -94,6 +99,7 @@ export function HolidaysPage() {
       type: 'local' as const,
       city: lh.city,
       states: lh.state ? [lh.state] : undefined,
+      locations: lh.city && lh.state ? [{ city: lh.city, state: lh.state }] : undefined,
     }));
     const automaticMunicipals: Holiday[] = municipalHolidays.map(holiday => {
       const [holidayYear, month, day] = holiday.date.split('-').map(Number);
@@ -103,15 +109,25 @@ export function HolidaysPage() {
         type: 'local' as const,
         city: holiday.city,
         states: [holiday.state],
+        locations: [{ city: holiday.city, state: holiday.state }],
       };
     });
     const unique = new Map<string, Holiday>();
     for (const holiday of [...baseHolidays, ...automaticMunicipals, ...locals]) {
       const key = `${holiday.date.getMonth()}-${holiday.date.getDate()}-${holiday.name}`;
       const existing = unique.get(key);
-      if (!existing) unique.set(key, { ...holiday, states: [...(holiday.states ?? [])] });
+      if (!existing) unique.set(key, {
+        ...holiday,
+        states: [...(holiday.states ?? [])],
+        locations: holiday.locations ? [...holiday.locations] : undefined,
+      });
       else {
         existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
+        const locations = [...(existing.locations ?? []), ...(holiday.locations ?? [])];
+        existing.locations = [...new Map(locations.map(location => [
+          `${location.city}|${location.state}`,
+          location,
+        ])).values()].sort((a, b) => a.state.localeCompare(b.state) || a.city.localeCompare(b.city));
         if (holiday.city && existing.city !== holiday.city) {
           existing.city = [existing.city, holiday.city].filter(Boolean).join(', ');
         }
@@ -173,6 +189,9 @@ export function HolidaysPage() {
   }
 
   function localBadgeLabel(h: Holiday) {
+    if (h.locations?.length) {
+      return h.locations.map(location => `${location.city}/${location.state}`).join(' • ');
+    }
     if ((h.states?.length ?? 0) > 1) return h.states!.join('/');
     if (h.city && h.states?.[0]) return `${h.city}/${h.states[0]}`;
     if (h.city) return h.city;

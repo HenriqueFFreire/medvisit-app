@@ -6,6 +6,7 @@ export interface Holiday {
   type: 'national' | 'state' | 'local';
   states?: string[]; // undefined = all states (national)
   city?: string;
+  locations?: Array<{ city: string; state: string }>;
   id?: string; // for local holidays (enables deletion)
 }
 

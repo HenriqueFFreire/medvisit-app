@@ -90,6 +90,7 @@ export function Dashboard() {
           type: 'local' as const,
           city: holiday.city,
           states: holiday.state ? [holiday.state] : undefined,
+          locations: holiday.city && holiday.state ? [{ city: holiday.city, state: holiday.state }] : undefined,
         })),
     ]);
     for (const holiday of [...municipalThisYear, ...municipalNextYear]) {
@@ -100,14 +101,26 @@ export function Dashboard() {
         type: 'local',
         city: holiday.city,
         states: [holiday.state],
+        locations: [{ city: holiday.city, state: holiday.state }],
       });
     }
     const unique = new Map<string, Holiday>();
     for (const holiday of combined) {
       const key = `${format(holiday.date, 'yyyy-MM-dd')}|${holiday.name}`;
       const existing = unique.get(key);
-      if (!existing) unique.set(key, { ...holiday, states: [...(holiday.states ?? [])] });
-      else existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
+      if (!existing) unique.set(key, {
+        ...holiday,
+        states: [...(holiday.states ?? [])],
+        locations: holiday.locations ? [...holiday.locations] : undefined,
+      });
+      else {
+        existing.states = [...new Set([...(existing.states ?? []), ...(holiday.states ?? [])])].sort();
+        const locations = [...(existing.locations ?? []), ...(holiday.locations ?? [])];
+        existing.locations = [...new Map(locations.map(location => [
+          `${location.city}|${location.state}`,
+          location,
+        ])).values()];
+      }
     }
     return [...unique.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [localHolidays, municipalNextYear, municipalThisYear, todayYear, workingStates]);
