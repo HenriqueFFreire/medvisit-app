@@ -92,7 +92,8 @@ async function main() {
   const existingSnapshot = await db.collection('doctor_directory').get();
   const occupiedCrms = new Set(existingSnapshot.docs.map(document => document.id));
   const pending = [];
-  const stats = { scanned: doctors.length, created: 0, existing: 0, duplicate: 0, invalid: 0 };
+  const contributions = [];
+  const stats = { scanned: doctors.length, created: 0, contributions: 0, existing: 0, duplicate: 0, invalid: 0 };
 
   for (const { document, data } of doctors) {
     const crmId = normalizeCrm(data.crm);
@@ -102,6 +103,31 @@ async function main() {
       stats.invalid++;
       continue;
     }
+    const fallbackAddressId = `legacy-${document.id}`;
+    const addresses = Array.isArray(data.addresses) && data.addresses.length > 0
+      ? data.addresses
+      : [{
+          id: fallbackAddressId,
+          label: 'Principal',
+          isPrimary: true,
+          address: data.address ?? {},
+          coordinates: data.coordinates ?? null
+        }];
+    const primaryAddressId = addresses.find(address => address.isPrimary)?.id ?? addresses[0].id;
+    const workingHours = (Array.isArray(data.workingHours) ? data.workingHours : []).map(hour => ({
+      ...hour,
+      addressId: hour.addressId ?? primaryAddressId
+    }));
+    contributions.push({
+      ref: db.collection('doctor_directory').doc(crmId).collection('contributors').doc(ownerId),
+      data: {
+        userId: ownerId,
+        sourceDoctorId: document.id,
+        addresses,
+        workingHours,
+        updatedAt: new Date().toISOString()
+      }
+    });
     if (occupiedCrms.has(crmId)) {
       if (existingSnapshot.docs.some(existing => existing.id === crmId)) stats.existing++;
       else stats.duplicate++;
@@ -118,6 +144,8 @@ async function main() {
         specialty: String(data.specialty ?? '').trim() || null,
         city: String(address.city ?? '').trim(),
         state: String(address.state ?? '').trim().toUpperCase(),
+        addresses,
+        workingHours,
         ownerId,
         sourceDoctorId: document.id,
         updatedAt: new Date().toISOString()
@@ -126,9 +154,11 @@ async function main() {
   }
 
   stats.created = pending.length;
+  stats.contributions = contributions.length;
   if (!dryRun) {
     const writer = db.bulkWriter();
     for (const entry of pending) writer.create(entry.ref, entry.data);
+    for (const entry of contributions) writer.set(entry.ref, entry.data);
     await writer.close();
   }
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc, writeBatch,
-  query, orderBy, where, limit
+  collection, doc, getDocs, getDoc, addDoc, updateDoc, writeBatch,
+  query, orderBy, where
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -108,15 +108,24 @@ function mapDocToDoctor(id: string, data: Record<string, unknown>): Doctor {
 }
 
 async function syncDoctorsWithDirectory(userId: string, doctors: Doctor[]): Promise<void> {
-  const results = await Promise.allSettled(doctors.map(doctor => publishDirectoryDoctor({
-    userId,
-    sourceDoctorId: doctor.id,
-    name: doctor.name,
-    crm: doctor.crm,
-    specialty: doctor.specialty,
-    city: doctor.address.city,
-    state: doctor.address.state
-  })));
+  const results = await Promise.allSettled(doctors.map(doctor => {
+    const addresses = normalizeDoctorAddresses(doctor.address, doctor.addresses);
+    const primaryAddressId = addresses.find(address => address.isPrimary)?.id;
+    return publishDirectoryDoctor({
+      userId,
+      sourceDoctorId: doctor.id,
+      name: doctor.name,
+      crm: doctor.crm,
+      specialty: doctor.specialty,
+      city: doctor.address.city,
+      state: doctor.address.state,
+      addresses,
+      workingHours: doctor.workingHours.map(hour => ({
+        ...hour,
+        addressId: hour.addressId ?? primaryAddressId
+      }))
+    });
+  }));
   const failures = results.filter(result => result.status === 'rejected');
   if (failures.length > 0) {
     console.error(`Não foi possível sincronizar ${failures.length} CRM(s) com o Diretório MedVisit.`);
@@ -265,7 +274,9 @@ export function useDoctors(): UseDoctorsResult {
         crm: data.crm,
         specialty: data.specialty,
         city: primaryAddress.city,
-        state: primaryAddress.state
+        state: primaryAddress.state,
+        addresses: serializedAddresses,
+        workingHours: docData.workingHours
       });
     } catch (directoryError) {
       console.error('Médico salvo, mas não foi possível atualizar o Diretório MedVisit:', directoryError);
@@ -356,7 +367,9 @@ export function useDoctors(): UseDoctorsResult {
         crm: data.crm ?? existing.crm,
         specialty: data.specialty ?? existing.specialty,
         city: primaryAddress.city,
-        state: primaryAddress.state
+        state: primaryAddress.state,
+        addresses: serializedAddresses,
+        workingHours: (updates.workingHours as WorkingHours[] | undefined) ?? existing.workingHours
       });
       if (data.crm && data.crm !== existing.crm) {
         await unpublishDirectoryDoctor(user.id, existing.crm);
@@ -380,25 +393,35 @@ export function useDoctors(): UseDoctorsResult {
 
   const deleteDoctor = async (id: string): Promise<void> => {
     if (!user) throw new Error('Usuário não autenticado');
+
+    // Remove the dependent records as part of the deletion. Blocking doctors that
+    // had ever been routed made the delete button appear to do nothing for most
+    // real-world records.
     const [visitsSnap, scheduledSnap] = await Promise.all([
       getDocs(query(
         collection(db, 'users', user.id, 'visits'),
-        where('doctorId', '==', id),
-        limit(1)
+        where('doctorId', '==', id)
       )),
       getDocs(query(
         collection(db, 'users', user.id, 'scheduled_visits'),
-        where('doctorId', '==', id),
-        limit(1)
+        where('doctorId', '==', id)
       ))
     ]);
 
-    if (!visitsSnap.empty || !scheduledSnap.empty) {
-      throw new Error('Este médico possui visitas ou roteiros vinculados e não pode ser excluído.');
+    const references = [...visitsSnap.docs, ...scheduledSnap.docs];
+    // Firestore batches accept at most 500 operations. Leave room and delete the
+    // doctor in the final batch so a partial failure never leaves orphan visits
+    // pointing to an already removed doctor.
+    for (let index = 0; index < references.length; index += 450) {
+      const batch = writeBatch(db);
+      references.slice(index, index + 450).forEach(reference => batch.delete(reference.ref));
+      await withTimeout(batch.commit());
     }
 
     const doctorToDelete = doctors.find(doctor => doctor.id === id);
-    await withTimeout(deleteDoc(doc(db, 'users', user.id, 'doctors', id)));
+    const doctorBatch = writeBatch(db);
+    doctorBatch.delete(doc(db, 'users', user.id, 'doctors', id));
+    await withTimeout(doctorBatch.commit());
     if (doctorToDelete) {
       try {
         await unpublishDirectoryDoctor(user.id, doctorToDelete.crm);

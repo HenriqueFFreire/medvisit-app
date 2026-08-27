@@ -73,6 +73,8 @@ export interface DirectoryDoctor {
   specialty?: string;
   city: string;
   state: string;
+  addresses: DoctorAddressEntry[];
+  workingHours: WorkingHours[];
   updatedAt: Date;
 }
 
@@ -112,6 +114,7 @@ export type RouteType = 'day' | 'week' | 'month';
 export interface Route {
   id: string;
   name?: string;
+  sourceRouteId?: string;
   routeType: RouteType;
   weekStartDate: Date;
   weekEndDate: Date;

@@ -14,6 +14,7 @@ interface DoctorFormProps {
   onSubmit: (data: DoctorFormData) => Promise<void>;
   onCancel: () => void;
   isLoading?: boolean;
+  initialCrm?: string;
 }
 
 export interface DoctorFormData {
@@ -59,7 +60,7 @@ function getDaysInBirthdayMonth(month: number | ''): number {
   return new Date(2024, month, 0).getDate();
 }
 
-export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading }: DoctorFormProps) {
+export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading, initialCrm = '' }: DoctorFormProps) {
   const initialAddressState = useMemo(() => {
     const primaryAddress = doctor?.address || {
       street: '',
@@ -75,7 +76,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
   const defaultFormData = useMemo<DoctorFormData>(() => ({
     name: doctor?.name || '',
-    crm: doctor?.crm || '',
+    crm: doctor?.crm || initialCrm,
     specialty: doctor?.specialty || '',
     category: doctor?.category || 'B',
     phone: doctor?.phone || '',
@@ -89,7 +90,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     })),
     notes: doctor?.notes || '',
     hasPanel: doctor?.hasPanel ?? true
-  }), [doctor, initialAddressState]);
+  }), [doctor, initialAddressState, initialCrm]);
 
   const [formData, setFormData] = useState<DoctorFormData>(defaultFormData);
 
@@ -104,10 +105,27 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
   const [loadingAddressId, setLoadingAddressId] = useState<string | null>(null);
   const [isSearchingDirectory, setIsSearchingDirectory] = useState(false);
   const [directoryResult, setDirectoryResult] = useState<DirectoryDoctor | null>(null);
+  const [selectedDirectoryAddressIds, setSelectedDirectoryAddressIds] = useState<string[]>([]);
   const [directoryMessage, setDirectoryMessage] = useState<string | null>(null);
   const initialBirthday = getBirthdayParts(doctor?.birthDate);
   const [birthdayDay, setBirthdayDay] = useState<number | ''>(initialBirthday.day);
   const [birthdayMonth, setBirthdayMonth] = useState<number | ''>(initialBirthday.month);
+
+  useEffect(() => {
+    if (doctor || !initialCrm) return;
+    let active = true;
+    setIsSearchingDirectory(true);
+    findDirectoryDoctor(initialCrm)
+      .then(result => {
+        if (!active) return;
+        setDirectoryResult(result);
+        setSelectedDirectoryAddressIds([]);
+        setDirectoryMessage(result ? null : 'CRM não encontrado no Diretório MedVisit.');
+      })
+      .catch(() => active && setDirectoryMessage('Não foi possível consultar o diretório. Tente novamente.'))
+      .finally(() => active && setIsSearchingDirectory(false));
+    return () => { active = false; };
+  }, [doctor, initialCrm]);
 
   useEffect(() => {
     const parts = getBirthdayParts(doctor?.birthDate);
@@ -196,6 +214,8 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
     try {
       const result = await findDirectoryDoctor(formData.crm);
       setDirectoryResult(result);
+      // Shared addresses are suggestions and must be explicitly selected by the user.
+      setSelectedDirectoryAddressIds([]);
       setDirectoryMessage(result ? null : 'CRM não encontrado no Diretório MedVisit.');
     } catch (error) {
       console.error('Erro ao consultar Diretório MedVisit:', error);
@@ -207,7 +227,33 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
 
   const importDirectoryResult = () => {
     if (!directoryResult) return;
+    const selectedAddresses = directoryResult.addresses.filter(entry => selectedDirectoryAddressIds.includes(entry.id));
     setFormData(prev => {
+      if (selectedAddresses.length > 0) {
+        const addressIdMap = new Map<string, string>();
+        const importedAddresses = selectedAddresses.map((entry, index) => {
+          const imported = createDoctorAddressEntry(entry.address, {
+            label: entry.label,
+            isPrimary: index === 0
+          });
+          addressIdMap.set(entry.id, imported.id);
+          return imported;
+        });
+        const importedHours = directoryResult.workingHours
+          .filter(hour => hour.addressId && addressIdMap.has(hour.addressId))
+          .map(hour => ({ ...hour, addressId: addressIdMap.get(hour.addressId!) }));
+
+        return {
+          ...prev,
+          name: directoryResult.name,
+          crm: directoryResult.crm,
+          specialty: directoryResult.specialty ?? prev.specialty,
+          addresses: importedAddresses,
+          address: { ...importedAddresses[0].address },
+          workingHours: importedHours
+        };
+      }
+
       const nextAddresses = (prev.addresses ?? []).map(entry => entry.isPrimary ? {
         ...entry,
         address: {
@@ -230,8 +276,11 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
       };
     });
     setErrors(prev => ({ ...prev, name: '', crm: '', city: '', state: '' }));
-    setDirectoryMessage('Dados profissionais importados. Complete o endereço e os horários.');
+    setDirectoryMessage(selectedAddresses.length > 0
+      ? `${selectedAddresses.length} endereço(s) e seus horários foram importados.`
+      : 'Dados profissionais importados. Complete o endereço e os horários.');
     setDirectoryResult(null);
+    setSelectedDirectoryAddressIds([]);
   };
 
   const fillAddressFromCEP = async (entry: DoctorAddressEntry) => {
@@ -464,6 +513,7 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                 onChange={e => {
                   handleInputChange('crm', e.target.value);
                   setDirectoryResult(null);
+                  setSelectedDirectoryAddressIds([]);
                   setDirectoryMessage(null);
                 }}
                 placeholder="SP0001234"
@@ -503,8 +553,56 @@ export function DoctorForm({ doctor, doctors = [], onSubmit, onCancel, isLoading
                   {directoryResult.specialty ? ` • ${directoryResult.specialty}` : ''}
                   {(directoryResult.city || directoryResult.state) ? ` • ${directoryResult.city}/${directoryResult.state}` : ''}
                 </p>
-                <button type="button" onClick={importDirectoryResult} className="btn-primary px-3 py-1.5 text-sm mt-3">
-                  Importar dados
+                {directoryResult.addresses.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs font-semibold text-blue-900">Escolha os endereços que deseja importar:</p>
+                    {directoryResult.addresses.map((entry, index) => {
+                      const addressHours = directoryResult.workingHours.filter(hour => hour.addressId === entry.id);
+                      return (
+                        <label key={entry.id} className="flex items-start gap-2 rounded-lg border border-blue-200 bg-white p-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={selectedDirectoryAddressIds.includes(entry.id)}
+                            onChange={event => setSelectedDirectoryAddressIds(current => event.target.checked
+                              ? [...current, entry.id]
+                              : current.filter(id => id !== entry.id))}
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-semibold text-gray-800">
+                              {entry.address.attendanceLocation || entry.label || `Endereço ${index + 1}`}
+                            </span>
+                            <span className="block text-xs text-gray-600">
+                              {entry.address.street}, {entry.address.number}
+                              {entry.address.complement ? `, ${entry.address.complement}` : ''}
+                              {entry.address.neighborhood ? ` — ${entry.address.neighborhood}` : ''}
+                              {` — ${entry.address.city}/${entry.address.state}`}
+                            </span>
+                            <span className="block text-xs text-blue-700 mt-1">
+                              {addressHours.length > 0
+                                ? addressHours.map(hour => {
+                                    const day = DAYS_OF_WEEK.find(item => item.value === hour.dayOfWeek)?.label ?? 'Dia';
+                                    const period = hour.period === 'AG' && hour.specificTime
+                                      ? hour.specificTime
+                                      : hour.period ? PERIOD_TIMES[hour.period].label : 'horário não informado';
+                                    return `${day}: ${period}`;
+                                  }).join(' • ')
+                                : 'Nenhum horário cadastrado'}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={importDirectoryResult}
+                  className="btn-primary px-3 py-1.5 text-sm mt-3"
+                >
+                  {selectedDirectoryAddressIds.length > 0
+                    ? 'Importar dados e endereços selecionados'
+                    : 'Importar somente dados profissionais'}
                 </button>
               </div>
             )}

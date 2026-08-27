@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Search, Plus, Upload, Download, Filter, ArrowLeft, Trash2, Edit, MapPin, Clock, FileText, Users, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Upload, Download, Filter, ArrowLeft, Trash2, Edit, MapPin, Clock, FileText, Users, FileSpreadsheet, CheckCircle2, Loader2 } from 'lucide-react';
 import { useDoctors } from '../hooks/useDoctors';
 import { useVisits } from '../hooks/useVisits';
 import { useApp } from '../contexts/AppContext';
@@ -10,10 +10,11 @@ import { DoctorForm, type DoctorFormData } from '../components/doctors/DoctorFor
 import { Modal } from '../components/common/Modal';
 import { PageLoading } from '../components/common/Loading';
 import { EmptyState } from '../components/common/EmptyState';
-import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, PERIOD_TIMES, type Doctor, type Visit } from '../types';
+import { MEDICAL_SPECIALTIES, DAYS_OF_WEEK, PERIOD_TIMES, type DirectoryDoctor, type Doctor, type Visit } from '../types';
 import { formatFullAddress, formatDate, formatVisitStatus } from '../utils/format';
 import { downloadDoctorTemplate, parseExcelFile, exportDoctorsToExcel } from '../services/excel';
 import { getDoctorPrimaryAddress } from '../utils/doctorAddressUtils';
+import { normalizeDirectoryCrm, searchDirectoryDoctors } from '../services/doctorDirectory';
 
 export function DoctorsPage() {
   const navigate = useNavigate();
@@ -35,6 +36,9 @@ export function DoctorsPage() {
   const cycleDay = settings?.cycleStartDay ?? 1;
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [directoryResults, setDirectoryResults] = useState<DirectoryDoctor[]>([]);
+  const [isSearchingDirectory, setIsSearchingDirectory] = useState(false);
+  const [initialCrm, setInitialCrm] = useState('');
   const [specialtyFilters, setSpecialtyFilters] = useState<string[]>([]);
   const [filterDays, setFilterDays] = useState<number[]>([]);
   const [filterCities, setFilterCities] = useState<string[]>([]);
@@ -87,11 +91,20 @@ export function DoctorsPage() {
     let result = doctors;
 
     if (searchQuery) {
-      result = result.filter(d =>
-        d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.crm.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.specialty?.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+      const textQuery = searchQuery.toLowerCase().trim();
+      const normalizedCrmQuery = normalizeDirectoryCrm(searchQuery);
+      const crmDigitsQuery = searchQuery.replace(/\D/g, '');
+      result = result.filter(d => {
+        const normalizedDoctorCrm = normalizeDirectoryCrm(d.crm);
+        const doctorCrmDigits = d.crm.replace(/\D/g, '');
+        const crmLettersQuery = normalizedCrmQuery.replace(/[^A-Z]/g, '');
+        const matchesCrm = normalizedCrmQuery.length > 0 && (crmLettersQuery
+          ? normalizedDoctorCrm.includes(crmLettersQuery) && doctorCrmDigits.includes(crmDigitsQuery)
+          : doctorCrmDigits.includes(crmDigitsQuery));
+        return d.name.toLowerCase().includes(textQuery)
+          || matchesCrm
+          || d.specialty?.toLowerCase().includes(textQuery);
+      });
     }
 
     if (specialtyFilters.length > 0) {
@@ -119,6 +132,43 @@ export function DoctorsPage() {
     setFilteredDoctors(result);
   }, [doctors, searchQuery, specialtyFilters, filterDays, filterCities, filterNeighborhoods, onlyUnvisited, cycleDay]);
 
+  useEffect(() => {
+    const digits = searchQuery.replace(/\D/g, '');
+    if (digits.length < 4) {
+      setDirectoryResults([]);
+      setIsSearchingDirectory(false);
+      return;
+    }
+
+    let active = true;
+    const timeout = setTimeout(async () => {
+      setIsSearchingDirectory(true);
+      try {
+        const results = await searchDirectoryDoctors(searchQuery);
+        if (!active) return;
+        const localCrms = new Set(doctors.map(doctor => normalizeDirectoryCrm(doctor.crm)));
+        const localCrmDigits = new Set(doctors.map(doctor => doctor.crm.replace(/\D/g, '')));
+        setDirectoryResults(results.filter(result => {
+          const normalizedResultCrm = normalizeDirectoryCrm(result.crm);
+          const resultDigits = result.crm.replace(/\D/g, '');
+          const resultHasState = /[A-Z]{2}/.test(normalizedResultCrm);
+          return !localCrms.has(normalizedResultCrm)
+            && (resultHasState || !localCrmDigits.has(resultDigits));
+        }));
+      } catch (error) {
+        console.error('Erro ao pesquisar médicos no Diretório MedVisit:', error);
+        if (active) setDirectoryResults([]);
+      } finally {
+        if (active) setIsSearchingDirectory(false);
+      }
+    }, 400);
+
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [searchQuery, doctors]);
+
   const handleAddDoctor = async (data: DoctorFormData) => {
     console.log('handleAddDoctor start', data);
     setIsSubmitting(true);
@@ -126,6 +176,7 @@ export function DoctorsPage() {
       await addDoctor(data);
       console.log('handleAddDoctor success');
       setShowForm(false);
+      setInitialCrm('');
       if (id === 'new') navigate('/doctors');
     } catch (err) {
       console.error('Erro ao salvar médico:', err);
@@ -453,6 +504,7 @@ export function DoctorsPage() {
               onSubmit={selectedDoctor ? handleUpdateDoctor : handleAddDoctor}
               onCancel={() => { setShowForm(false); if (id === 'new') navigate('/doctors'); }}
               isLoading={isSubmitting}
+              initialCrm={selectedDoctor ? '' : initialCrm}
             />
           </div>
         </div>
@@ -494,6 +546,7 @@ export function DoctorsPage() {
             <button
               onClick={() => {
                 setSelectedDoctor(null);
+                setInitialCrm('');
                 setShowForm(true);
               }}
               className="btn-primary text-sm"
@@ -546,6 +599,40 @@ export function DoctorsPage() {
           </div>
         </div>
       </div>
+
+      {(isSearchingDirectory || directoryResults.length > 0) && (
+        <div className="border-b border-blue-100 bg-blue-50 px-4 py-3">
+          {isSearchingDirectory ? (
+            <p className="flex items-center gap-2 text-sm text-blue-700" role="status">
+              <Loader2 className="h-4 w-4 animate-spin" /> Buscando também no Diretório MedVisit...
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-blue-800">Não cadastrados na sua base</p>
+              {directoryResults.map(result => (
+                <button
+                  key={result.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedDoctor(null);
+                    setInitialCrm(result.crm);
+                    setShowForm(true);
+                  }}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-blue-200 bg-white px-3 py-2 text-left hover:border-blue-400"
+                >
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-900">{result.name}</span>
+                    <span className="block text-xs text-gray-600">
+                      CRM {result.crm}{result.specialty ? ` • ${result.specialty}` : ''}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs font-semibold text-blue-600">Cadastrar</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filter result count */}
       {(searchQuery || specialtyFilters.length > 0 || filterDays.length > 0 || filterCities.length > 0 || filterNeighborhoods.length > 0 || onlyUnvisited) && (

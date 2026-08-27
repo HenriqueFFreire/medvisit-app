@@ -49,6 +49,7 @@ interface UseRoutesResult {
 
 interface CreateRouteInput {
   name?: string;
+  sourceRouteId?: string;
   routeType: RouteType;
   startDate: Date;
   visitsPerDay: number;
@@ -193,6 +194,7 @@ export function useRoutes(): UseRoutesResult {
         return {
           id: d.id,
           name: r.name as string | undefined,
+          sourceRouteId: r.sourceRouteId as string | undefined,
           routeType: (r.routeType as RouteType) || 'week',
           weekStartDate: fromLocalDateString(r.weekStartDate as string),
           weekEndDate: fromLocalDateString(r.weekEndDate as string),
@@ -528,6 +530,7 @@ export function useRoutes(): UseRoutesResult {
     const routeRef = doc(collection(db, 'users', user.id, 'routes'));
     const routeData = {
       ...(data.name ? { name: data.name } : {}),
+      ...(data.sourceRouteId ? { sourceRouteId: data.sourceRouteId } : {}),
       routeType: data.routeType,
       weekStartDate: toLocalDateString(routeStart),
       weekEndDate: toLocalDateString(routeEnd),
@@ -615,6 +618,8 @@ export function useRoutes(): UseRoutesResult {
 
     return {
       id: routeRef.id,
+      name: data.name,
+      sourceRouteId: data.sourceRouteId,
       routeType: data.routeType,
       weekStartDate: routeStart,
       weekEndDate: routeEnd,
@@ -709,6 +714,8 @@ export function useRoutes(): UseRoutesResult {
     }
 
     return createRoute({
+      name: routeData.name as string | undefined,
+      sourceRouteId: routeId,
       routeType: routeData.routeType as RouteType,
       startDate: newStartDate,
       visitsPerDay: routeData.visitsPerDay as number,

@@ -205,10 +205,20 @@ function getDoctorPeriodRank(doctor: Doctor, dayOfWeek: number): number {
   return schedule.period === 'T' ? 1 : 0;
 }
 
+function getDoctorScheduledMinutes(doctor: Doctor, dayOfWeek: number): number {
+  const schedule = doctor.workingHours.find(wh => wh.dayOfWeek === dayOfWeek && wh.period != null);
+  if (schedule?.period === 'AG' && /^\d{2}:\d{2}$/.test(schedule.specificTime ?? '')) {
+    return parseTime(schedule.specificTime!);
+  }
+
+  if (schedule?.period === 'T') return parseTime(PERIOD_TIMES.T.start);
+  return parseTime(PERIOD_TIMES.M.start);
+}
+
 function compareDoctorsForScheduling(a: Doctor, b: Doctor, dayOfWeek: number): number {
-  const aPeriodRank = getDoctorPeriodRank(a, dayOfWeek);
-  const bPeriodRank = getDoctorPeriodRank(b, dayOfWeek);
-  if (aPeriodRank !== bPeriodRank) return aPeriodRank - bPeriodRank;
+  const aScheduledMinutes = getDoctorScheduledMinutes(a, dayOfWeek);
+  const bScheduledMinutes = getDoctorScheduledMinutes(b, dayOfWeek);
+  if (aScheduledMinutes !== bScheduledMinutes) return aScheduledMinutes - bScheduledMinutes;
 
   const aCategoryRank = getDoctorCategoryRank(a.category);
   const bCategoryRank = getDoctorCategoryRank(b.category);
@@ -583,7 +593,9 @@ export function generateScheduleFromDoctors(
       currentTime = parseTime('13:00');
     } else if (doctorSchedule && !forcedMorning.has(doctor.id)) {
       const doctorTimes = getWorkingHourTimes(doctorSchedule);
-      const doctorStartTime = parseTime(doctorTimes.startTime);
+      const doctorStartTime = doctorSchedule.period === 'AG' && doctorSchedule.specificTime
+        ? parseTime(doctorSchedule.specificTime)
+        : parseTime(doctorTimes.startTime);
       if (currentTime < doctorStartTime) {
         currentTime = doctorStartTime;
       }

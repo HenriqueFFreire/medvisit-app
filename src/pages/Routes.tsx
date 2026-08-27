@@ -625,6 +625,7 @@ export function RoutesPage() {
         ) : (
           <div className="space-y-3">
             {filteredRoutes.map(route => {
+              const appliedCopies = routes.filter(candidate => candidate.sourceRouteId === route.id);
               const isExpanded = expandedRouteId === route.id;
               const isLoadingSched = loadingScheduleId === route.id;
               const schedules = routeSchedulesCache[route.id] || [];
@@ -651,6 +652,14 @@ export function RoutesPage() {
                       }`}>
                         {route.status === 'completed' ? 'Concluído' : 'Ativo'}
                       </span>
+                      {appliedCopies.length > 0 && (
+                        <span
+                          className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700"
+                          title={appliedCopies.map(copy => getRouteDateLabel(copy)).join(', ')}
+                        >
+                          Aplicado {appliedCopies.length > 1 ? `${appliedCopies.length}x` : ''}
+                        </span>
+                      )}
                     </div>
                     {route.name && (
                       <p className="font-bold text-gray-900 text-sm">{route.name}</p>
@@ -798,7 +807,7 @@ export function RoutesPage() {
                     className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm text-blue-600 hover:bg-blue-50 transition-colors font-medium"
                   >
                     <Copy className="w-4 h-4" />
-                    Aplicar
+                    {appliedCopies.length > 0 ? 'Aplicar novamente' : 'Aplicar'}
                   </button>
                   <div className="w-px bg-gray-100" />
                   <button
