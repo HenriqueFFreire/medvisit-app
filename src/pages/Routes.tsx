@@ -16,7 +16,7 @@ import { Modal } from '../components/common/Modal';
 import { PageLoading } from '../components/common/Loading';
 import { EmptyState } from '../components/common/EmptyState';
 import { formatWeekRange } from '../utils/format';
-import { generateWeeklyDistribution, type WeeklyRouteDistribution } from '../services/routing';
+import { generateMultiWeekDistribution, generateWeeklyDistribution, type WeeklyRouteDistribution } from '../services/routing';
 import type { RouteType, Doctor } from '../types';
 import { isVisitedThisMonth } from '../utils/visitCycle';
 
@@ -141,11 +141,14 @@ export function RoutesPage() {
     if (routeType !== 'day' && selectedDoctors.length > 0) {
       const selectedDoctorsList = doctors.filter(d => selectedDoctors.includes(d.id));
       if (routeType === 'week' && numberOfWeeks > 1) {
-        const perWeek = Math.ceil(selectedDoctorsList.length / numberOfWeeks);
-        const dists: WeeklyRouteDistribution[] = [];
-        for (let w = 0; w < numberOfWeeks; w++) {
-          const weekDocs = selectedDoctorsList.slice(w * perWeek, (w + 1) * perWeek);
-          dists.push(generateWeeklyDistribution(weekDocs, visitsPerDay));
+        const panelDocs = selectedDoctorsList.filter(d => d.hasPanel !== false);
+        const suggestionDocs = selectedDoctorsList.filter(d => d.hasPanel === false);
+        const dists = generateMultiWeekDistribution(panelDocs, numberOfWeeks, visitsPerDay, selectedDays);
+        const suggestionDists = generateMultiWeekDistribution(
+          suggestionDocs, numberOfWeeks, Number.MAX_SAFE_INTEGER, selectedDays
+        );
+        for (let week = 0; week < dists.length; week++) {
+          for (const day of selectedDays) dists[week][day].push(...suggestionDists[week][day]);
         }
         setMultiWeekDistributions(dists);
         setWeeklyDistribution(dists[0] || null);
@@ -159,7 +162,7 @@ export function RoutesPage() {
       setWeeklyDistribution(null);
       setMultiWeekDistributions([]);
     }
-  }, [selectedDoctors, doctors, visitsPerDay, routeType, numberOfWeeks]);
+  }, [selectedDoctors, doctors, visitsPerDay, routeType, numberOfWeeks, selectedDays]);
 
   const computePreview = (): PreviewDay[] => {
     const selectedDoctorObjects = doctors.filter(d => selectedDoctors.includes(d.id));
@@ -204,8 +207,12 @@ export function RoutesPage() {
         if (multiWeekDistributions.length > 0) {
           const weekIdx = Math.floor((date.getTime() - weekStart.getTime()) / 604800000);
           const distrib = multiWeekDistributions[Math.max(0, Math.min(multiWeekDistributions.length - 1, weekIdx))];
-          basePanelDocs = filterAvailableOnDay((distrib?.[dow] ?? []).filter(d => d.hasPanel !== false), dow);
-          baseSuggestionDocs = filterAvailableOnDay((distrib?.[dow] ?? []).filter(d => d.hasPanel === false), dow);
+          const assignedPanel = filterAvailableOnDay((distrib?.[dow] ?? []).filter(d => d.hasPanel !== false), dow);
+          basePanelDocs = assignedPanel.slice(0, visitsPerDay);
+          baseSuggestionDocs = [
+            ...assignedPanel.slice(visitsPerDay),
+            ...filterAvailableOnDay((distrib?.[dow] ?? []).filter(d => d.hasPanel === false), dow)
+          ];
         } else if (weeklyDistribution) {
           basePanelDocs = filterAvailableOnDay((weeklyDistribution[dow] ?? []).filter(d => d.hasPanel !== false), dow);
           baseSuggestionDocs = filterAvailableOnDay((weeklyDistribution[dow] ?? []).filter(d => d.hasPanel === false), dow);

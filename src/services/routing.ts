@@ -323,6 +323,62 @@ export interface WeeklyRouteDistribution {
   [dayOfWeek: number]: Doctor[];
 }
 
+// Balance doctors across the whole multi-week horizon instead of splitting the
+// input list into independent week-sized chunks. Scarce availability is handled
+// first; region affinity breaks ties between equally loaded valid days.
+export function generateMultiWeekDistribution(
+  doctors: Doctor[],
+  numberOfWeeks: number,
+  visitsPerDay: number = 11,
+  selectedDays: number[] = [1, 2, 3, 4, 5]
+): WeeklyRouteDistribution[] {
+  const weeks = Array.from({ length: Math.max(1, numberOfWeeks) }, () => ({
+    1: [], 2: [], 3: [], 4: [], 5: []
+  } as WeeklyRouteDistribution));
+  const validDays = selectedDays.filter(day => day >= 1 && day <= 5);
+  if (validDays.length === 0) return weeks;
+
+  const availableDays = (doctor: Doctor) => {
+    const configured = doctor.workingHours.filter(wh => wh.period != null);
+    if (configured.length === 0) return validDays;
+    return validDays.filter(day => configured.some(wh => wh.dayOfWeek === day));
+  };
+
+  const ordered = [...doctors].sort((a, b) => {
+    const flexibility = availableDays(a).length - availableDays(b).length;
+    return flexibility || getDoctorCategoryRank(a.category) - getDoctorCategoryRank(b.category)
+      || a.name.localeCompare(b.name);
+  });
+
+  for (const doctor of ordered) {
+    const days = availableDays(doctor);
+    if (days.length === 0) continue;
+    const region = getDoctorRegion(doctorAtAttendanceAddress(doctor, days[0]));
+    const candidates = weeks.flatMap((week, weekIndex) => days.map(day => {
+      const assigned = week[day];
+      const sameRegion = assigned.filter(item =>
+        getDoctorRegion(doctorAtAttendanceAddress(item, day)) === region
+      ).length;
+      return { weekIndex, day, load: assigned.length, sameRegion };
+    }));
+    const withinCapacity = candidates.filter(candidate => candidate.load < visitsPerDay);
+    const pool = withinCapacity.length > 0 ? withinCapacity : candidates;
+    pool.sort((a, b) => a.load - b.load || b.sameRegion - a.sameRegion
+      || a.weekIndex - b.weekIndex || a.day - b.day);
+    const target = pool[0];
+    weeks[target.weekIndex][target.day].push(doctor);
+  }
+
+  for (const week of weeks) {
+    for (const day of validDays) {
+      week[day] = optimizeRouteNearestNeighbor(
+        sortDoctorsForScheduling(week[day], day), undefined, day
+      );
+    }
+  }
+  return weeks;
+}
+
 // Generate optimized weekly distribution based on region and availability
 export function generateWeeklyDistribution(
   doctors: Doctor[],
@@ -494,32 +550,23 @@ export function generateDaySchedule(
 
     // Adjust start time if doctor starts later
     const doctorStartTime = parseTime(doctorTimes.startTime);
-    if (currentTime < doctorStartTime) {
-      currentTime = doctorStartTime;
-    }
-
-    // Check if we can fit this visit within working hours
-    if (currentTime + visitDuration > endTime) {
-      break;
-    }
-
-    // Check if within doctor's hours
-    const doctorEndTime = parseTime(doctorTimes.endTime);
-    if (currentTime + visitDuration > doctorEndTime) {
-      continue; // Skip this doctor
-    }
-
-    // Calculate travel time from previous location
+    // Calculate travel time from the last visit that was actually scheduled.
     let travelTime = 0;
     let distance = 0;
-
-    if (i > 0 && orderedDoctors[i - 1].coordinates && doctor.coordinates) {
-      distance = haversineDistance(orderedDoctors[i - 1].coordinates!, doctor.coordinates);
+    const previousDoctor = visits.at(-1)?.doctor;
+    if (previousDoctor?.coordinates && doctor.coordinates) {
+      distance = haversineDistance(previousDoctor.coordinates, doctor.coordinates);
       travelTime = estimateTravelTime(distance);
     }
 
-    const scheduledTime = formatMinutesToTime(currentTime);
-    const estimatedEndTime = formatMinutesToTime(currentTime + visitDuration);
+    const visitStartTime = Math.max(currentTime + travelTime, doctorStartTime);
+
+    if (visitStartTime + visitDuration > endTime) break;
+    const doctorEndTime = parseTime(doctorTimes.endTime);
+    if (visitStartTime + visitDuration > doctorEndTime) continue;
+
+    const scheduledTime = formatMinutesToTime(visitStartTime);
+    const estimatedEndTime = formatMinutesToTime(visitStartTime + visitDuration);
 
     visits.push({
       id: `${date.toISOString()}-${doctor.id}`,
@@ -535,7 +582,7 @@ export function generateDaySchedule(
     });
 
     // Move to next time slot
-    currentTime += visitDuration + minimumInterval + travelTime;
+    currentTime = visitStartTime + visitDuration + minimumInterval;
   }
 
   return visits;
@@ -588,36 +635,37 @@ export function generateScheduleFromDoctors(
     const doctor = availableDoctors[i];
     const doctorSchedule = doctor.workingHours.find(wh => wh.dayOfWeek === dayOfWeek);
 
-    // Adjust currentTime forward if doctor's period starts later (e.g. afternoon doctors)
-    if (forcedAfternoon.has(doctor.id) && currentTime < parseTime('13:00')) {
-      currentTime = parseTime('13:00');
-    } else if (doctorSchedule && !forcedMorning.has(doctor.id)) {
-      const doctorTimes = getWorkingHourTimes(doctorSchedule);
-      const doctorStartTime = doctorSchedule.period === 'AG' && doctorSchedule.specificTime
-        ? parseTime(doctorSchedule.specificTime)
-        : parseTime(doctorTimes.startTime);
-      if (currentTime < doctorStartTime) {
-        currentTime = doctorStartTime;
-      }
-      // Note: we do NOT skip based on doctorEndTime — period defines order, not a hard cutoff.
-      // If the overall workday still has time, we schedule the doctor regardless of their period window.
-    }
-
-    // Stop only when the overall workday is over
-    if (currentTime + visitDuration > endTime) {
-      break;
-    }
-
-    // Calculate travel time from the last actually scheduled doctor
     let travelTime = 0;
     let distance = 0;
     if (lastScheduledIndex >= 0 && availableDoctors[lastScheduledIndex].coordinates && doctor.coordinates) {
       distance = haversineDistance(availableDoctors[lastScheduledIndex].coordinates!, doctor.coordinates);
       travelTime = estimateTravelTime(distance);
     }
+    let visitStartTime = currentTime + travelTime;
 
-    const scheduledTime = formatMinutesToTime(currentTime);
-    const estimatedEndTime = formatMinutesToTime(currentTime + visitDuration);
+    // Adjust currentTime forward if doctor's period starts later (e.g. afternoon doctors)
+    if (forcedAfternoon.has(doctor.id) && visitStartTime < parseTime('13:00')) {
+      visitStartTime = parseTime('13:00');
+    }
+    if (doctorSchedule) {
+      const doctorTimes = getWorkingHourTimes(doctorSchedule);
+      const doctorStartTime = doctorSchedule.period === 'AG' && doctorSchedule.specificTime
+        ? parseTime(doctorSchedule.specificTime)
+        : parseTime(doctorTimes.startTime);
+      if (visitStartTime < doctorStartTime) visitStartTime = doctorStartTime;
+      const doctorEndTime = doctorSchedule.period === 'AG' && doctorSchedule.specificTime
+        ? parseTime(doctorSchedule.specificTime) + visitDuration
+        : parseTime(doctorTimes.endTime);
+      if (visitStartTime + visitDuration > doctorEndTime) continue;
+    }
+
+    // Stop only when the overall workday is over
+    if (visitStartTime + visitDuration > endTime) {
+      break;
+    }
+
+    const scheduledTime = formatMinutesToTime(visitStartTime);
+    const estimatedEndTime = formatMinutesToTime(visitStartTime + visitDuration);
 
     visits.push({
       id: `${date.toISOString()}-${doctor.id}`,
@@ -634,7 +682,7 @@ export function generateScheduleFromDoctors(
 
     lastScheduledIndex = i;
     // Move to next time slot
-    currentTime += visitDuration + minimumInterval + travelTime;
+    currentTime = visitStartTime + visitDuration + minimumInterval;
   }
 
   return visits;
