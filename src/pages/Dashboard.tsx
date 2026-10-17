@@ -143,17 +143,20 @@ export function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 lg:h-full lg:min-h-0 lg:overflow-hidden lg:px-7 lg:py-3">
-      <div className="mx-auto max-w-6xl space-y-5 lg:flex lg:h-full lg:flex-col lg:gap-3 lg:space-y-0">
-        <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="min-h-screen bg-slate-50 px-4 py-5 sm:px-6 lg:h-full lg:min-h-0 lg:overflow-hidden lg:px-8 lg:py-5">
+      <div className="mx-auto max-w-7xl space-y-5 lg:flex lg:h-full lg:flex-col lg:gap-4 lg:space-y-0">
+        <header className="relative flex flex-col gap-5 overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-blue-700 to-indigo-800 px-5 py-6 text-white shadow-lg shadow-blue-950/10 sm:flex-row sm:items-center sm:justify-between sm:px-7 lg:py-5">
           <div>
-            <p className="text-sm font-medium text-blue-600">{format(today, "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
-            <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
-              {greeting}{firstName ? `, ${firstName}` : ''}
+            <p className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold capitalize text-blue-50">
+              <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+              {format(today, "EEEE, d 'de' MMMM", { locale: ptBR })}
+            </p>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              {greeting}{firstName ? `, ${firstName}!` : '!'}
             </h1>
-            <p className="mt-1 text-sm text-slate-500 lg:mt-0">Confira suas visitas e prioridades para hoje.</p>
+            <p className="mt-1 text-sm text-blue-100">Confira suas visitas e prioridades para hoje.</p>
           </div>
-          <button onClick={() => navigate('/agenda')} className="btn-secondary self-start sm:self-auto">
+          <button onClick={() => navigate('/agenda')} className="inline-flex items-center self-start rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-blue-700 sm:self-auto">
             <CalendarDays className="mr-2 h-4 w-4" /> Ver agenda completa
           </button>
         </header>
@@ -162,7 +165,7 @@ export function Dashboard() {
           <button
             type="button"
             onClick={() => navigate(`/doctors/${birthdaysToday[0].doctor.id}`)}
-            className="flex w-full items-center gap-3 rounded-xl border border-pink-200 bg-pink-50 px-4 py-2.5 text-left text-pink-800 shadow-sm"
+            className="flex w-full items-center gap-3 rounded-2xl border border-pink-200 bg-gradient-to-r from-pink-50 to-white px-4 py-3 text-left text-pink-800 shadow-sm transition hover:shadow-md"
           >
             <span className="rounded-lg bg-pink-100 p-2"><Gift className="h-5 w-5" /></span>
             <div className="min-w-0 flex-1">
@@ -175,16 +178,16 @@ export function Dashboard() {
           </button>
         )}
 
-        <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] lg:gap-3">
-          <section className="overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50 px-5 py-4 lg:py-2.5">
+        <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr] lg:gap-4">
+          <section className="overflow-hidden rounded-3xl border border-blue-100 bg-white shadow-sm shadow-blue-950/5">
+            <div className="flex items-center justify-between bg-gradient-to-r from-blue-700 to-indigo-600 px-5 py-4 lg:py-3.5">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Próxima visita</p>
-                <p className="mt-0.5 text-sm text-blue-800">Seu próximo compromisso do dia</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-blue-100">Próxima visita</p>
+                <p className="mt-0.5 text-sm text-white/90">Seu próximo compromisso do dia</p>
               </div>
-              <div className="rounded-xl bg-blue-600 p-2.5 text-white"><Stethoscope className="h-5 w-5" /></div>
+              <div className="rounded-2xl bg-white/15 p-2.5 text-white ring-1 ring-white/20"><Stethoscope className="h-5 w-5" /></div>
             </div>
-            <div className="p-5 lg:p-3.5">
+            <div className="p-5 lg:p-4">
               {loadingSchedule ? (
                 <div className="h-40 animate-pulse rounded-xl bg-slate-100" />
               ) : nextVisit ? (
@@ -198,7 +201,7 @@ export function Dashboard() {
                       {nextVisit.status === 'in_progress' ? 'Em andamento' : 'Próxima'}
                     </span>
                   </div>
-                  <div className="grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2">
+                  <div className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-4 sm:grid-cols-2">
                     <div className="flex items-center gap-2 text-sm text-slate-700"><Clock3 className="h-4 w-4 text-blue-500" /> {nextVisit.scheduledTime}</div>
                     <div className="flex items-start gap-2 text-sm text-slate-700"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" /> {getVisitLocation(nextVisit)}</div>
                   </div>
@@ -216,13 +219,13 @@ export function Dashboard() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:p-4">
+          <section className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-900/5 lg:p-4">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-semibold text-slate-900">Progresso do ciclo</h2>
                 <p className="mt-0.5 text-xs text-slate-500">Ciclo iniciado no dia {cycleDay}</p>
               </div>
-              <span className="text-2xl font-bold text-blue-600">{progress}%</span>
+              <span className="rounded-xl bg-blue-50 px-3 py-1 text-xl font-bold text-blue-700">{progress}%</span>
             </div>
             <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100 lg:mt-3 lg:h-2.5">
               <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-700 transition-all" style={{ width: `${progress}%` }} />
@@ -235,8 +238,8 @@ export function Dashboard() {
           </section>
         </div>
 
-        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[1.2fr_0.6fr_0.7fr]">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:min-h-0 lg:overflow-hidden lg:p-4">
+        <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[1.2fr_0.6fr_0.7fr]">
+        <section className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-900/5 lg:min-h-0 lg:overflow-hidden lg:p-4">
           <div className="mb-4 flex items-center justify-between">
             <div><h2 className="font-semibold text-slate-900">Agenda de hoje</h2><p className="text-xs text-slate-500">{todayVisits.length} compromisso{todayVisits.length === 1 ? '' : 's'} programado{todayVisits.length === 1 ? '' : 's'}</p></div>
             <button onClick={() => navigate('/agenda')} className="text-sm font-medium text-blue-600 hover:text-blue-700">Ver completa</button>
@@ -258,7 +261,7 @@ export function Dashboard() {
           ) : <p className="rounded-xl bg-slate-50 py-8 text-center text-sm text-slate-500">Nenhuma visita programada para hoje.</p>}
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:min-h-0 lg:overflow-hidden">
+        <section className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-900/5 lg:min-h-0 lg:overflow-hidden">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="rounded-lg bg-pink-50 p-2 text-pink-600"><Cake className="h-5 w-5" /></span>
@@ -284,7 +287,7 @@ export function Dashboard() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm lg:min-h-0 lg:overflow-hidden">
+        <section className="rounded-3xl border border-amber-200/80 bg-white p-4 shadow-sm shadow-slate-900/5 lg:min-h-0 lg:overflow-hidden">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="rounded-lg bg-amber-50 p-2 text-amber-600"><CalendarOff className="h-5 w-5" /></span>
@@ -328,10 +331,10 @@ export function Dashboard() {
           <h2 className="mb-3 font-semibold text-slate-900">Ações rápidas</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {quickActions.map(({ label, icon: Icon, onClick }) => (
-              <button key={label} onClick={onClick} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-200 hover:shadow-md lg:p-3">
-                <span className="rounded-xl bg-blue-50 p-3 text-blue-600 lg:p-2"><Icon className="h-5 w-5" /></span>
+              <button key={label} onClick={onClick} className="group flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 lg:p-3">
+                <span className="rounded-xl bg-blue-50 p-3 text-blue-600 transition-colors group-hover:bg-blue-600 group-hover:text-white lg:p-2"><Icon className="h-5 w-5" /></span>
                 <span className="font-medium text-slate-800">{label}</span>
-                <Plus className="ml-auto h-4 w-4 text-slate-400" />
+                <Plus className="ml-auto h-4 w-4 text-slate-400 transition-colors group-hover:text-blue-600" />
               </button>
             ))}
           </div>
